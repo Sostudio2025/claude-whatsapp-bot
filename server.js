@@ -797,14 +797,14 @@ app.post('/claude-query', async(req, res) => {
         console.log('📊 סה"כ שלבים:', stepCount);
 
         // וודא שהתגובה תקינה ל-JSON
-        const response = {
+        const responseData = {
             success: true,
             response: String(finalResponse),
             toolsExecuted: toolsExecuted || [],
             steps: stepCount || 0
         };
 
-        res.json(response);
+        res.json(responseData);
 
     } catch (error) {
         console.error('❌ שגיאה כללית:', error);
