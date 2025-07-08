@@ -164,6 +164,29 @@ async function createDetailedConfirmationMessage(toolUses, messages) {
                 }
             }
             
+            // אם לא מצאנו בהיסטוריה, נבצע חיפוש חדש כדי לקבל ערכים עדכניים
+            if (!customerName || Object.keys(currentValues).length === 0) {
+                try {
+                    console.log('🔍 מחפש נתונים עדכניים לרשומה:', recordId);
+                    const response = await axios.get(
+                        `https://api.airtable.com/v0/appL1FfUaRbmPNI01/${tableId}/${recordId}`,
+                        {
+                            headers: {
+                                'Authorization': 'Bearer ' + config.AIRTABLE_API_KEY
+                            }
+                        }
+                    );
+                    
+                    if (response.data && response.data.fields) {
+                        customerName = response.data.fields['שם מלא'] || response.data.fields['שם העסקה'] || response.data.fields['שם הפרויקט'] || '';
+                        currentValues = response.data.fields;
+                        console.log('✅ נתונים עדכניים התקבלו:', customerName);
+                    }
+                } catch (error) {
+                    console.error('❌ שגיאה בקבלת נתונים עדכניים:', error.message);
+                }
+            }
+            
             // בנה הודעה ידידותית
             const fieldUpdates = [];
             Object.keys(fields).forEach(fieldName => {
