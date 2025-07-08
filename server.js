@@ -5,26 +5,9 @@ const fs = require('fs');
 const path = require('path');
 
 function loadConfig() {
-    // בשרת נשתמש במשתני סביבה
-    if (process.env.NODE_ENV === 'production') {
-        return {
-            CLAUDE_API_KEY: process.env.CLAUDE_API_KEY,
-            AIRTABLE_API_KEY: process.env.AIRTABLE_API_KEY
-        };
-    }
-    
-    // בפיתוח נשתמש בקובץ (אם קיים)
     const configPath = path.join(__dirname, 'env_config.txt');
-    if (!fs.existsSync(configPath)) {
-        // אם אין קובץ, נשתמש גם במשתני סביבה
-        return {
-            CLAUDE_API_KEY: process.env.CLAUDE_API_KEY,
-            AIRTABLE_API_KEY: process.env.AIRTABLE_API_KEY
-        };
-    }
-    
-    // קריאה מקובץ רק אם הוא קיים
     const configData = fs.readFileSync(configPath, 'utf8');
+
     const config = {};
     configData.split('\n').forEach(line => {
         const parts = line.split('=');
@@ -73,7 +56,7 @@ function addToConversationHistory(senderId, role, content) {
     }
 }
 
-// פונקציה חכמה לזיהוי אישור באמצעות Claude
+// פונקציה לזיהוי אישור באמצעות Claude
 async function detectConfirmation(message) {
     try {
         const prompt = `נתח את ההודעה הבאה וזהה אם זה אישור או דחייה:
@@ -98,7 +81,6 @@ async function detectConfirmation(message) {
 
         const confirmationType = response.content[0].text.trim().toLowerCase();
         
-        // בדיקת תקינות
         if (['approve', 'reject', 'unclear'].includes(confirmationType)) {
             return confirmationType;
         }
@@ -111,8 +93,8 @@ async function detectConfirmation(message) {
     }
 }
 
-// פונקציה משופרת ליצירת הודעת אישור מפורטת ונוחה לקריאה
-async function createDetailedConfirmationMessage(toolUses, originalMessage, messages) {
+// פונקציה ליצירת הודעת אישור משופרת עם שם לקוח וערכים קיימים
+async function createDetailedConfirmationMessage(toolUses, messages) {
     let actionDescription = '';
     
     for (const tool of toolUses) {
@@ -120,18 +102,13 @@ async function createDetailedConfirmationMessage(toolUses, originalMessage, mess
             const tableId = tool.input.tableId;
             const fields = tool.input.fields;
             
-            // זיהוי טבלה
             let tableName = 'רשומה';
             if (tableId === 'tblSgYN8CbQcxeT0j') tableName = 'עסקה';
             else if (tableId === 'tblcTFGg6WyKkO5kq') tableName = 'לקוח';
             else if (tableId === 'tbl9p6XdUrecy2h7G') tableName = 'פרויקט';
-            else if (tableId === 'tbl3ZCmqfit2L0iQ0') tableName = 'ליד';
-            else if (tableId === 'tbl7etO9Yn3VH9QpT') tableName = 'משרד';
-            else if (tableId === 'tblNJzcMRtyMdH14d') tableName = 'פרח';
             
             actionDescription += `אני עומד ליצור ${tableName} חדשה`;
             
-            // הוסף פרטים על השדות החשובים
             if (fields['שם מלא']) actionDescription += ` עבור ${fields['שם מלא']}`;
             if (fields['שם העסקה']) actionDescription += ` - עסקה: ${fields['שם העסקה']}`;
             if (fields['שם הפרויקט']) actionDescription += ` - פרויקט: ${fields['שם הפרויקט']}`;
@@ -154,7 +131,6 @@ async function createDetailedConfirmationMessage(toolUses, originalMessage, mess
                             try {
                                 const result = JSON.parse(content.content);
                                 if (result.records && Array.isArray(result.records)) {
-                                    // מצא את הרשומה עם אותו ID
                                     const record = result.records.find(r => r.id === recordId);
                                     if (record && record.fields) {
                                         customerName = record.fields['שם מלא'] || record.fields['שם העסקה'] || record.fields['שם הפרויקט'] || '';
@@ -207,9 +183,6 @@ async function createDetailedConfirmationMessage(toolUses, originalMessage, mess
                     } else {
                         fieldUpdates.push(`הכתובת ל-${newValue}`);
                     }
-                } else if (fieldName.includes('הערות') || fieldName === 'הערות כלליות') {
-                    const shortNewValue = typeof newValue === 'string' && newValue.length > 30 ? newValue.substring(0, 30) + '...' : newValue;
-                    fieldUpdates.push(`ההערות ל-${shortNewValue}`);
                 } else {
                     // שדה כללי
                     if (currentValue && typeof newValue === 'string' && newValue.length < 50) {
@@ -366,15 +339,13 @@ async function searchAirtable(baseId, tableId, searchTerm) {
             JSON.stringify(record.fields).toLowerCase().includes(searchTerm.toLowerCase())
         );
 
-        console.log('✅ נמצאו', filteredRecords.length, 'רשומות בטבלה', tableId);
+        console.log('✅ נמצאו', filteredRecords.length, 'רשומות');
 
         // החזר מידע מפורט יותר כדי שClaude יוכל לבצע פעולות
         return {
             found: filteredRecords.length,
-            tableId: tableId, // חשוב! שמור את ה-tableId כדי שהעדכון יהיה באותה טבלה
             records: filteredRecords.map(record => ({
                 id: record.id,
-                tableId: tableId, // הוסף גם כאן
                 fields: record.fields
             }))
         };
@@ -432,27 +403,9 @@ async function createRecord(baseId, tableId, fields) {
 
 async function updateRecord(baseId, tableId, recordId, fields) {
     try {
-        console.log('🔄 מעדכן רשומה:', recordId, 'בטבלה:', tableId);
+        console.log('🔄 מעדכן רשומה:', recordId);
         console.log('📝 שדות חדשים:', JSON.stringify(fields, null, 2));
 
-        // ראשית - בדוק שהרשומה קיימת בטבלה
-        const checkUrl = 'https://api.airtable.com/v0/' + baseId + '/' + tableId + '/' + recordId;
-        try {
-            await axios.get(checkUrl, {
-                headers: {
-                    'Authorization': 'Bearer ' + config.AIRTABLE_API_KEY
-                }
-            });
-            console.log('✅ רשומה נמצאה בטבלה:', tableId);
-        } catch (checkError) {
-            if (checkError.response && checkError.response.status === 404) {
-                console.error('❌ רשומה לא נמצאה:', recordId, 'בטבלה:', tableId);
-                throw new Error(`Record ID ${recordId} does not exist in table ${tableId}. Please search for the record first in the correct table.`);
-            }
-            throw checkError;
-        }
-
-        // אם הרשומה קיימת - בצע עדכון
         const url = 'https://api.airtable.com/v0/' + baseId + '/' + tableId;
         const response = await axios.patch(url, {
             records: [{
@@ -466,7 +419,7 @@ async function updateRecord(baseId, tableId, recordId, fields) {
             }
         });
 
-        console.log('✅ רשומה עודכנה בהצלחה בטבלה:', tableId);
+        console.log('✅ רשומה עודכנה בהצלחה');
         return response.data.records[0];
     } catch (error) {
         console.error('❌ שגיאה בעדכון:', error.response ? error.response.data : error.message);
@@ -674,7 +627,7 @@ async function handleToolUse(toolUse) {
     }
 }
 
-// SystemPrompt משופר ומפושט
+// SystemPrompt המקורי + הוספת חוק למניעת לולאות
 const systemPrompt = 'אתה עוזר חכם שמחובר לאיירטיבל.\n\n' +
     '🚨 חוקים קריטיים:\n' +
     '1. כאשר מוצאים רשומה - מיד בצע את הפעולה הנדרשת!\n' +
@@ -683,9 +636,7 @@ const systemPrompt = 'אתה עוזר חכם שמחובר לאיירטיבל.\n\
     '4. כל עדכון חייב להיעשות עם הכלי update_record!\n' +
     '5. השתמש במזהה הרשומה (ID) שקיבלת מהחיפוש!\n' +
     '6. אחרי כל פעולה - הודע בבירור מה קרה!\n' +
-    '7. 🔴 חשוב ביותר: תמיד עדכן רשומה באותה טבלה שבה מצאת אותה!\n' +
-    '8. 🔴 אם חיפשת בטבלה X - עדכן בטבלה X!\n' +
-    '9. 🔴 אל תיכנס ללולאות - אם מצאת רשומה, עדכן אותה מיד!\n\n' +
+    '7. 🔴 אל תיכנס ללולאות! אם ביצעת עדכון/יצירה - סיים!\n\n' +
     '🎯 תרחיש מיוחד - לקוח השלים הרשמה / העביר דמי רצינות:\n' +
     'כשאומרים לך "לקוח השלים הרשמה" או "העביר דמי רצינות":\n' +
     '1. מצא את הלקוח בטבלת הלקוחות (search_airtable)\n' +
@@ -693,22 +644,11 @@ const systemPrompt = 'אתה עוזר חכם שמחובר לאיירטיבל.\n\
     '3. בדוק אם יש עסקה קיימת (search_transactions)\n' +
     '4. אם יש עסקה קיימת - הודע: "✅ כבר קיימת עסקה עבור [שם לקוח] ו[שם פרויקט]"\n' +
     '5. אם אין עסקה - צור עסקה חדשה (create_record)\n' +
-    '6. אם הלקוח לא בסטטוס "לקוח בתהליך" - עדכן (update_record)\n\n' +
+    '6. אם הלקוח לא בסטטוס "לקוח בתהליך" - עדכן (update_record)\n' +
+    '⚠️ חשוב: אחרי כל בדיקת עסקה - הודע מה המצב!\n' +
+    '⚠️ אם נמצאה עסקה קיימת - אמר זאת בבירור!\n\n' +
     'Base ID: appL1FfUaRbmPNI01\n\n' +
     '📋 טבלאות ושדות זמינים:\n\n' +
-    '👥 לקוחות (Customers) - tblcTFGg6WyKkO5kq:\n' +
-    '- מזהה לקוח (ID_Client)\n' +
-    '- שם מלא\n' +
-    '- טלפון\n' +
-    '- אימייל\n' +
-    '- סטטוס (ערכים: לקוח בתהליך, לא התקדם, קבע פגישה)\n' +
-    '- מועד פגישה ראשונה\n' +
-    '- כתובת לקוח\n' +
-    '- גודל משרד רצוי\n' +
-    '- הערות כלליות\n' +
-    '- פרויקט מקור\n' +
-    '- תאריך יצירה\n' +
-    '- תאריך עדכון אחרון\n\n' +
     '🏢 עסקאות (Transactions) - tblSgYN8CbQcxeT0j:\n' +
     '- מזהה עסקה (ID_Deal)\n' +
     '- שם העסקה\n' +
@@ -717,6 +657,8 @@ const systemPrompt = 'אתה עוזר חכם שמחובר לאיירטיבל.\n\
     '- שם הפרויקט (from מזהה פרויקט (ID_Project))\n' +
     '- מזהה לקוח ראשי (ID_Client)\n' +
     '- שם מלא (from מזהה לקוח ראשי (ID_Client))\n' +
+    '- מזהה לקוח משני (ID_Client)\n' +
+    '- שם מלא (from מזהה לקוח משני (ID_Client))\n' +
     '- סטטוס לקוח בעסקה (ערכים: לא מתקדם, השלים הרשמה, רכש)\n' +
     '- גודל המשרד\n' +
     '- קומה\n' +
@@ -732,8 +674,28 @@ const systemPrompt = 'אתה עוזר חכם שמחובר לאיירטיבל.\n\
     '- דמי רצינות שולמו\n' +
     '- שיטת תשלום דמי רצינות (ערכים: צ׳ק, העברה בנקאית)\n' +
     '- תאריך השלמת הרשמה\n' +
+    '- עורך דין - לקוח\n' +
+    '- טלפון - עו״ד לקוח\n' +
+    '- מייל - עו״ד לקוח\n' +
+    '- סטטוס משפטי (ערכים: לקוח מחכה להסכם, לקוח קיבל הסכם - מחכים להערות עו״ד, וכו\')\n' +
+    '- סטטוס בנק (ערכים: בנק קיבל פרטי לקוח, ממתינים למסמכים, וכו\')\n' +
+    '- תאריך חתימת עסקה\n' +
+    '- משרד מקושר\n' +
     '- הערות כלליות\n' +
     '- הערות AI\n\n' +
+    '👥 לקוחות (Customers) - tblcTFGg6WyKkO5kq:\n' +
+    '- מזהה לקוח (ID_Client)\n' +
+    '- שם מלא\n' +
+    '- טלפון\n' +
+    '- אימייל\n' +
+    '- סטטוס (ערכים: לקוח בתהליך, לא התקדם, קבע פגישה)\n' +
+    '- מועד פגישה ראשונה\n' +
+    '- כתובת לקוח\n' +
+    '- גודל משרד רצוי\n' +
+    '- הערות כלליות\n' +
+    '- פרויקט מקור\n' +
+    '- תאריך יצירה\n' +
+    '- תאריך עדכון אחרון\n\n' +
     '🏗️ פרויקטים (Projects) - tbl9p6XdUrecy2h7G:\n' +
     '- מזהה פרויקט (ID_Project)\n' +
     '- שם הפרויקט\n' +
@@ -742,9 +704,63 @@ const systemPrompt = 'אתה עוזר חכם שמחובר לאיירטיבל.\n\
     '- סטטוס (ערכים: פעיל)\n' +
     '- מנהל מכירות פרונטלי\n' +
     '- שם היזם\n' +
+    '- שם איש קשר\n' +
+    '- טלפון איש קשר\n' +
+    '- מייל איש קשר\n' +
+    '- מנהל מכירות טלפוני\n' +
+    '- בנק מטפל\n' +
     '- הערות כלליות\n' +
     '- תאריך יצירה\n' +
     '- תאריך עדכון אחרון\n\n' +
+    '📞 לידים (Leads) - tbl3ZCmqfit2L0iQ0:\n' +
+    '- מזהה ליד (ID_Lead)\n' +
+    '- שם מלא\n' +
+    '- טלפון\n' +
+    '- אימייל\n' +
+    '- תאריך יצירת ליד\n' +
+    '- סטטוס ליד\n' +
+    '- יזם\n' +
+    '- מזהה פרויקט\n' +
+    '- שם הפרויקט\n' +
+    '- הערות כלליות\n' +
+    '- גודל משרד רצוי\n\n' +
+    '🏢 משרדים (Offices) - tbl7etO9Yn3VH9QpT:\n' +
+    '- מזהה משרד (Office_ID)\n' +
+    '- שם הפרויקט\n' +
+    '- שם המשרד\n' +
+    '- סטטוס משרד (ערכים: פנוי, מכור)\n' +
+    '- כיוון\n' +
+    '- גודל המשרד\n' +
+    '- שם איש קשר\n' +
+    '- טלפון איש קשר\n' +
+    '- מייל איש קשר\n' +
+    '- הערות\n' +
+    '- תאריך יצירה\n' +
+    '- תאריך עדכון אחרון\n\n' +
+    '🌸 פרחים (Flowers) - tblNJzcMRtyMdH14d:\n' +
+    '- מזהה פרחים (ID_Flowers)\n' +
+    '- מזהה פרויקט (ID_Project)\n' +
+    '- מזהה לקוח (ID_Client)\n' +
+    '- תאריך פרחים\n' +
+    '- נשלחו פרחים\n' +
+    '- סטטוס פרחים\n' +
+    '- כתובת למשלוח\n' +
+    '- הערות\n' +
+    '- תאריך יצירה\n' +
+    '- תאריך עדכון אחרון\n\n' +
+    '⚠️ בקרה (Control) - tblYxAM0xNp0z9EoN:\n' +
+    '- מזהה בקרה (ID_Control)\n' +
+    '- סטטוס\n' +
+    '- תאריך יצירה\n' +
+    '- הערת איש מכירות\n' +
+    '- שגיאה סוכן\n' +
+    '- הערת סוכן\n\n' +
+    '👨‍💼 מנהלים/עובדים - tbl8JT0j7C35yMcc2:\n' +
+    '- מזהה עובד\n' +
+    '- שם מלא\n' +
+    '- מספר טלפון\n' +
+    '- כתובת אימייל\n' +
+    '- סוג (ערכים: מנהל פרונטלי, מנהל טלפוני)\n\n' +
     '🛠️ כלים זמינים:\n' +
     '- search_airtable: חיפוש רשומות\n' +
     '- search_transactions: חיפוש עסקות לפי לקוח ופרויקט\n' +
@@ -752,12 +768,18 @@ const systemPrompt = 'אתה עוזר חכם שמחובר לאיירטיבל.\n\
     '- create_record: יצירת רשומה חדשה\n' +
     '- update_record: עדכון רשומה קיימת (השתמש בזה!)\n' +
     '- get_table_fields: קבלת שדות\n\n' +
-    '⚡ דוגמה נכונה לעדכון:\n' +
-    'בקשה: "תשנה לאוראל מזרחי את הטלפון ל 050-1234567"\n' +
-    '1. search_airtable ב-tblcTFGg6WyKkO5kq עבור "אוראל מזרחי"\n' +
-    '2. קבל record ID מטבלת הלקוחות\n' +
-    '3. update_record ב-tblcTFGg6WyKkO5kq עם השדה "טלפון": "050-1234567"\n' +
-    '4. סיום - אל תחזור על הפעולה!\n\n' +
+    'דוגמאות לשדות קשורים:\n' +
+    '- מזהה פרויקט (ID_Project): ["recLF0iMhQEx6lMqX"] (מגדל תל אביב)\n' +
+    '- מזהה לקוח (ID_Client): ["rec0GDfLEzXXCUX9X"] (שי טוקטלי)\n' +
+    '- סטטוס עסקה: "בתהליך" (לא "התקדם" או כל דבר אחר)\n' +
+    '- סטטוס לקוח בעסקה: "לא מתקדם" (לא "לא התקדם")\n\n' +
+    '⚡ דוגמה נכונה:\n' +
+    'בקשה: "דונלד טראמפ העביר דמי רצינות לפארק רעננה"\n' +
+    '1. search_airtable עבור דונלד -> מקבל customer ID\n' +
+    '2. search_airtable עבור פארק רעננה -> מקבל project ID\n' +
+    '3. search_transactions עבור customer ID + project ID\n' +
+    '4. אם יש עסקה -> "✅ כבר קיימת עסקה עבור דונלד טראמפ ופארק רעננה"\n' +
+    '5. אם אין עסקה -> create_record בטבלת עסקאות\n\n' +
     '🇮🇱 ענה רק בעברית';
 
 app.post('/claude-query', async(req, res) => {
@@ -820,11 +842,12 @@ app.post('/claude-query', async(req, res) => {
         let conversationFinished = false;
         let stepCount = 0;
 
-        // לולאה מוגבלת לביצוע הפעולות - מקסימום 5 שלבים
+        // לולאה מוגבלת - מקסימום 5 שלבים כדי למנוע לולאות אינסופיות
         while (!conversationFinished && stepCount < 5) {
             stepCount++;
             console.log('🔄 שלב', stepCount);
 
+            // שליחה ל-Claude
             response = await anthropic.messages.create({
                 model: "claude-3-5-sonnet-20241022",
                 max_tokens: 3000,
@@ -835,9 +858,11 @@ app.post('/claude-query', async(req, res) => {
 
             console.log('📝 תגובת Claude (שלב ' + stepCount + '):', JSON.stringify(response, null, 2));
 
+            // בדיקה אם יש כלים להפעיל
             const toolUses = response.content.filter(content => content.type === 'tool_use');
-            
+
             if (toolUses.length === 0) {
+                // אין כלים - זה התשובה הסופית
                 const textContent = response.content.find(content => content.type === 'text');
                 if (textContent) {
                     finalResponse = textContent.text;
@@ -847,8 +872,10 @@ app.post('/claude-query', async(req, res) => {
                 break;
             }
 
+            // יש כלים להפעיל
             console.log('🛠️ כלים להפעיל:', toolUses.length);
-            
+
+            // הוסף את תגובת Claude להודעות
             messages.push({
                 role: 'assistant',
                 content: response.content
@@ -863,7 +890,7 @@ app.post('/claude-query', async(req, res) => {
 
             if (needsConfirmation) {
                 // יצירת הודעת אישור מפורטת עם שם הלקוח והערכים הקיימים
-                const actionDescription = await createDetailedConfirmationMessage(toolUses, message, messages);
+                const actionDescription = await createDetailedConfirmationMessage(toolUses, messages);
                 
                 // שמור את הפעולה בזיכרון
                 pendingActions.set(sender, {
@@ -906,7 +933,7 @@ app.post('/claude-query', async(req, res) => {
                     } else if (errorMessage.includes('status code 422')) {
                         errorMessage = 'שגיאה: נתונים לא תקינים או שדה לא קיים.';
                     } else if (errorMessage.includes('does not exist in this table')) {
-                        errorMessage = 'שגיאה: הרשומה לא קיימת בטבלה הזו. אנא חפש את הרשומה תחילה בטבלה הנכונה.';
+                        errorMessage = 'שגיאה: הרשומה לא קיימת בטבלה.';
                     }
 
                     toolResults.push({
@@ -917,6 +944,7 @@ app.post('/claude-query', async(req, res) => {
                 }
             }
 
+            // הוסף תוצאות הכלים להודעות
             if (toolResults.length > 0) {
                 messages.push({
                     role: 'user',
@@ -926,24 +954,37 @@ app.post('/claude-query', async(req, res) => {
 
             console.log('📊 כלים שהופעלו עד כה:', toolsExecuted);
 
-            // אם ביצענו עדכון או יצירה - סיים
+            // אם ביצענו עדכון או יצירה - סיים כדי למנוע לולאות
             if (toolsExecuted.includes('update_record') || toolsExecuted.includes('create_record')) {
                 conversationFinished = true;
                 finalResponse = 'הפעולה בוצעה בהצלחה!';
-                console.log('✅ פעולה מרכזית הושלמה - מסיים');
+                console.log('✅ פעולה מרכזית הושלמה - מסיים כדי למנוע לולאות');
                 break;
             }
         }
 
-        // הכן תגובה סופית
+        // אם הגענו למגבלת שלבים ללא תגובה סופית
         if (stepCount >= 5 && !finalResponse) {
             console.log('⚠️ הגענו למגבלת שלבים - מכין תגובה סופית');
-            finalResponse = 'הפעולה בוצעה חלקית. אנא בדוק את התוצאות במערכת.';
+            const hasSearchCustomer = toolsExecuted.includes('search_airtable');
+            const hasSearchTransactions = toolsExecuted.includes('search_transactions');
+            const hasCreateTransaction = toolsExecuted.includes('create_record');
+
+            if (hasSearchCustomer && hasSearchTransactions) {
+                if (hasCreateTransaction) {
+                    finalResponse = '✅ הרשמת הלקוח הושלמה בהצלחה! נוצרה עסקה חדשה במערכת.';
+                } else {
+                    finalResponse = '✅ נמצאה עסקה קיימת במערכת עבור הלקוח והפרויקט. הלקוח כבר רשום.';
+                }
+            } else {
+                finalResponse = 'הפעולה בוצעה חלקית. אנא בדוק את התוצאות במערכת.';
+            }
         }
 
+        // וודא שיש תגובה סופית
         if (!finalResponse || finalResponse.trim() === '') {
-            finalResponse = toolsExecuted.length > 0 ? 
-                'הפעולה בוצעה בהצלחה.' : 
+            finalResponse = toolsExecuted.length > 0 ?
+                'הפעולה בוצעה בהצלחה.' :
                 'לא הבנתי את הבקשה. אנא נסח מחדש.';
         }
 
@@ -1013,6 +1054,6 @@ app.listen(3000, '0.0.0.0', () => {
     console.log('📝 Functions: search, get records, create, update, get fields');
     console.log('🧪 Test: GET /test-airtable');
     console.log('🧠 Memory: POST /clear-memory, GET /memory');
-    console.log('🔐 Confirmation system for sensitive operations');
-    console.log('⚡ VERSION 2024: Simplified - no immediate responses, fixed loops');
+    console.log('🔐 Enhanced confirmation system with user-friendly messages');
+    console.log('⚡ VERSION 2024: Fixed loops, enhanced confirmations, surgical updates');
 });
