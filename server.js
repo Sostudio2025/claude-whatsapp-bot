@@ -50,6 +50,17 @@ const anthropic = new Anthropic({
 
 const conversationMemory = new Map();
 
+// מערך של הודעות ראשוניות לפי הקשר
+const initialMessages = {
+    search: ['🔍 אני מחפש בשבילך...', '🔍 סריקת המערכת...', '🔍 מחפש את המידע...'],
+    update: ['⏳ אני על זה, מעדכן...', '🔄 מתחיל לעדכן...', '⚙️ עובד על העדכון...'],
+    create: ['🆕 יוצר עבורך...', '📝 מכין רשומה חדשה...', '🔨 בונה את המידע...'],
+    general: ['💭 אני חושב...', '⏳ רגע, בודק...', '🤖 מעבד את הבקשה...']
+};
+
+// מערכת אישורים - זיכרון זמני לבקשות מחכות לאישור
+const pendingActions = new Map();
+
 function getConversationHistory(senderId) {
     if (!conversationMemory.has(senderId)) {
         conversationMemory.set(senderId, []);
@@ -67,6 +78,163 @@ function addToConversationHistory(senderId, role, content) {
     // הפחת את היסטוריית השיחה כדי למנוע לולאות
     if (history.length > 10) {
         history.splice(0, history.length - 10);
+    }
+}
+
+// פונקציה חכמה לזיהוי סוג הפעולה באמצעות Claude
+async function detectActionType(message) {
+    try {
+        const prompt = `נתח את ההודעה הבאה וזהה את סוג הפעולה המבוקשת:
+
+"${message}"
+
+החזר רק אחת מהאפשרויות הבאות:
+- search (אם זה בקשה לחיפוש, הצגת מידע, או קבלת פרטים)
+- update (אם זה בקשה לעדכון, שינוי, או התאמה של מידע קיים)
+- create (אם זה בקשה ליצירה, הוספה, רישום, או העברת דמי רצינות)
+- general (אם זה שאלה כללית או בקשה לא ברורה)
+
+החזר רק את המילה המתאימה:`;
+
+        const response = await anthropic.messages.create({
+            model: "claude-3-5-sonnet-20241022",
+            max_tokens: 50,
+            messages: [{
+                role: 'user',
+                content: prompt
+            }]
+        });
+
+        const actionType = response.content[0].text.trim().toLowerCase();
+        
+        // בדיקת תקינות
+        if (['search', 'update', 'create', 'general'].includes(actionType)) {
+            return actionType;
+        }
+        
+        return 'general';
+        
+    } catch (error) {
+        console.error('❌ שגיאה בזיהוי סוג פעולה:', error);
+        return 'general';
+    }
+}
+
+// פונקציה לבחירת הודעה ראשונית
+function getInitialMessage(actionType) {
+    const messages = initialMessages[actionType];
+    return messages[Math.floor(Math.random() * messages.length)];
+}
+
+// פונקציה לזיהוי אם צריך אישור
+function requiresConfirmation(toolsExecuted) {
+    return toolsExecuted.includes('create_record') || 
+           toolsExecuted.includes('update_record') || 
+           toolsExecuted.includes('delete_records');
+}
+
+// פונקציה חכמה לזיהוי אישור באמצעות Claude
+async function detectConfirmation(message) {
+    try {
+        const prompt = `נתח את ההודעה הבאה וזהה אם זה אישור או דחייה:
+
+"${message}"
+
+החזר רק אחת מהאפשרויות הבאות:
+- approve (אם זה אישור - כן, אוקיי, מאשר, בצע, המשך, סבבה וכו')
+- reject (אם זה דחייה - לא, ביטול, עצור, אל תעשה, לא רוצה וכו')
+- unclear (אם לא ברור)
+
+החזר רק את המילה המתאימה:`;
+
+        const response = await anthropic.messages.create({
+            model: "claude-3-5-sonnet-20241022",
+            max_tokens: 50,
+            messages: [{
+                role: 'user',
+                content: prompt
+            }]
+        });
+
+        const confirmationType = response.content[0].text.trim().toLowerCase();
+        
+        // בדיקת תקינות
+        if (['approve', 'reject', 'unclear'].includes(confirmationType)) {
+            return confirmationType;
+        }
+        
+        return 'unclear';
+        
+    } catch (error) {
+        console.error('❌ שגיאה בזיהוי אישור:', error);
+        return 'unclear';
+    }
+}
+
+// פונקציה לביצוע פעולה מאושרת
+async function executePendingAction(pendingAction) {
+    try {
+        const { toolUses, messages } = pendingAction;
+        
+        console.log('🔄 מבצע פעולה מאושרת:', toolUses.length, 'כלים');
+        
+        const toolResults = [];
+        const toolsExecuted = [];
+        
+        for (const toolUse of toolUses) {
+            try {
+                toolsExecuted.push(toolUse.name);
+                console.log('🛠️ מפעיל כלי מאושר:', toolUse.name);
+
+                const toolResult = await handleToolUse(toolUse);
+                console.log('✅ כלי מאושר הושלם:', toolUse.name);
+
+                toolResults.push({
+                    type: "tool_result",
+                    tool_use_id: toolUse.id,
+                    content: JSON.stringify(toolResult, null, 2)
+                });
+
+            } catch (toolError) {
+                console.error('❌ שגיאה בכלי מאושר:', toolUse.name, toolError.message);
+                
+                toolResults.push({
+                    type: "tool_result",
+                    tool_use_id: toolUse.id,
+                    content: 'שגיאה: ' + toolError.message
+                });
+            }
+        }
+        
+        // הוסף תוצאות לשיחה וקבל תגובה סופית מClaude
+        messages.push({
+            role: 'user',
+            content: toolResults
+        });
+        
+        const finalResponse = await anthropic.messages.create({
+            model: "claude-3-5-sonnet-20241022",
+            max_tokens: 3000,
+            system: systemPrompt,
+            messages: messages,
+            tools: []
+        });
+        
+        const finalText = finalResponse.content.find(c => c.type === 'text');
+        const responseText = finalText ? finalText.text : 'הפעולה בוצעה בהצלחה!';
+        
+        return {
+            success: true,
+            response: '✅ ' + responseText,
+            toolsExecuted: toolsExecuted
+        };
+        
+    } catch (error) {
+        console.error('❌ שגיאה בביצוע פעולה מאושרת:', error);
+        return {
+            success: false,
+            response: 'אירעה שגיאה בביצוע הפעולה: ' + error.message
+        };
     }
 }
 
@@ -569,13 +737,77 @@ const systemPrompt = 'אתה עוזר חכם שמחובר לאיירטיבל.\n\
     '5. אם אין עסקה -> create_record בטבלת עסקאות\n\n' +
     '🇮🇱 ענה רק בעברית';
 
+// endpoint חדש לשליחת הודעות מיידיות מ-n8n
+app.post('/send-immediate-response', async(req, res) => {
+    try {
+        const { message, chatId } = req.body;
+        
+        // זיהוי סוג הפעולה באמצעות Claude
+        const actionType = await detectActionType(message);
+        
+        // בחירת הודעה מתאימה
+        const immediateResponse = getInitialMessage(actionType);
+        
+        console.log('📱 שליחת הודעה מיידית:', immediateResponse, 'לצ\'אט:', chatId);
+        
+        res.json({
+            success: true,
+            immediateResponse: immediateResponse,
+            actionType: actionType
+        });
+        
+    } catch (error) {
+        console.error('❌ שגיאה בהודעה מיידית:', error);
+        res.json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 app.post('/claude-query', async(req, res) => {
     try {
         const messageData = req.body;
         const message = messageData.message;
         const sender = messageData.sender || 'default';
+        const chatId = messageData.chatId; // נדרש לאישורים
 
         console.log('📨 הודעה מ-' + sender + ':', message);
+
+        // בדיקה אם זה אישור לפעולה מחכה
+        if (pendingActions.has(sender)) {
+            const confirmationType = await detectConfirmation(message);
+            
+            if (confirmationType === 'approve') {
+                const pendingAction = pendingActions.get(sender);
+                console.log('✅ מבצע פעולה מאושרת עבור:', sender);
+                
+                // מחק מהזיכרון
+                pendingActions.delete(sender);
+                
+                // בצע את הפעולה המאושרת
+                const result = await executePendingAction(pendingAction);
+                
+                return res.json({
+                    success: true,
+                    response: result.response,
+                    actionCompleted: true
+                });
+            } else if (confirmationType === 'reject') {
+                pendingActions.delete(sender);
+                return res.json({
+                    success: true,
+                    response: 'הפעולה בוטלה לפי בקשתך. 👍',
+                    actionCancelled: true
+                });
+            } else if (confirmationType === 'unclear') {
+                return res.json({
+                    success: true,
+                    response: 'לא הבנתי את התגובה. אנא כתב "כן" לאישור או "לא" לביטול.',
+                    needsClarification: true
+                });
+            }
+        }
 
         const conversationHistory = getConversationHistory(sender);
         addToConversationHistory(sender, 'user', message);
@@ -593,12 +825,11 @@ app.post('/claude-query', async(req, res) => {
         let conversationFinished = false;
         let stepCount = 0;
 
-        // לולאה ללא הגבלת איטרציות (רק הגבלת בטיחות של הודעות)
+        // לולאה לביצוע הפעולות
         while (!conversationFinished && messages.length < 30) {
             stepCount++;
             console.log('🔄 שלב', stepCount);
 
-            // שליחה ל-Claude
             response = await anthropic.messages.create({
                 model: "claude-3-5-sonnet-20241022",
                 max_tokens: 3000,
@@ -609,11 +840,9 @@ app.post('/claude-query', async(req, res) => {
 
             console.log('📝 תגובת Claude (שלב ' + stepCount + '):', JSON.stringify(response, null, 2));
 
-            // בדיקה אם יש כלים להפעיל
             const toolUses = response.content.filter(content => content.type === 'tool_use');
-
+            
             if (toolUses.length === 0) {
-                // אין כלים - זה התשובה הסופית
                 const textContent = response.content.find(content => content.type === 'text');
                 if (textContent) {
                     finalResponse = textContent.text;
@@ -623,16 +852,51 @@ app.post('/claude-query', async(req, res) => {
                 break;
             }
 
-            // יש כלים להפעיל
             console.log('🛠️ כלים להפעיל:', toolUses.length);
-
-            // הוסף את תגובת Claude להודעות
+            
             messages.push({
                 role: 'assistant',
                 content: response.content
             });
 
-            // הפעל כלים
+            // בדיקה אם יש כלים שדורשים אישור
+            const needsConfirmation = toolUses.some(tool => 
+                tool.name === 'create_record' || 
+                tool.name === 'update_record' || 
+                tool.name === 'delete_records'
+            );
+
+            if (needsConfirmation) {
+                // הכן תיאור הפעולה לאישור
+                let actionDescription = 'אני מתכנן לבצע:\n';
+                toolUses.forEach(tool => {
+                    if (tool.name === 'create_record') {
+                        actionDescription += `• ➕ יצירת רשומה חדשה\n`;
+                    } else if (tool.name === 'update_record') {
+                        actionDescription += `• 🔄 עדכון רשומה קיימת\n`;
+                    } else if (tool.name === 'delete_records') {
+                        actionDescription += `• 🗑️ מחיקת רשומה\n`;
+                    }
+                });
+                
+                actionDescription += '\n❓ האם אתה רוצה שאמשיך? (כן/לא)';
+                
+                // שמור את הפעולה בזיכרון
+                pendingActions.set(sender, {
+                    toolUses: toolUses,
+                    messages: messages,
+                    stepCount: stepCount
+                });
+                
+                return res.json({
+                    success: true,
+                    response: actionDescription,
+                    needsConfirmation: true,
+                    chatId: chatId
+                });
+            }
+
+            // הפעל כלים רגילים (לא דורשים אישור)
             const toolResults = [];
             for (const toolUse of toolUses) {
                 try {
@@ -668,7 +932,6 @@ app.post('/claude-query', async(req, res) => {
                 }
             }
 
-            // הוסף תוצאות הכלים להודעות
             if (toolResults.length > 0) {
                 messages.push({
                     role: 'user',
@@ -679,13 +942,13 @@ app.post('/claude-query', async(req, res) => {
             console.log('📊 כלים שהופעלו עד כה:', toolsExecuted);
         }
 
-        // אם הגענו למגבלת הודעות ללא תגובה סופית
+        // הכן תגובה סופית
         if (messages.length >= 30 && !finalResponse) {
             console.log('⚠️ הגענו למגבלת הודעות - מכין תגובה סופית');
             const hasSearchCustomer = toolsExecuted.includes('search_airtable');
             const hasSearchTransactions = toolsExecuted.includes('search_transactions');
             const hasCreateTransaction = toolsExecuted.includes('create_record');
-
+            
             if (hasSearchCustomer && hasSearchTransactions) {
                 if (hasCreateTransaction) {
                     finalResponse = '✅ הרשמת הלקוח הושלמה בהצלחה! נוצרה עסקה חדשה במערכת.';
@@ -697,10 +960,9 @@ app.post('/claude-query', async(req, res) => {
             }
         }
 
-        // וודא שיש תגובה סופית
         if (!finalResponse || finalResponse.trim() === '') {
-            finalResponse = toolsExecuted.length > 0 ?
-                'הפעולה בוצעה בהצלחה.' :
+            finalResponse = toolsExecuted.length > 0 ? 
+                'הפעולה בוצעה בהצלחה.' : 
                 'לא הבנתי את הבקשה. אנא נסח מחדש.';
         }
 
@@ -770,5 +1032,7 @@ app.listen(3000, '0.0.0.0', () => {
     console.log('📝 Functions: search, get records, create, update, get fields');
     console.log('🧪 Test: GET /test-airtable');
     console.log('🧠 Memory: POST /clear-memory, GET /memory');
-    console.log('⚡ VERSION 2024: No iteration limits, unlimited conversation flow');
+    console.log('📱 New: POST /send-immediate-response - for immediate responses');
+    console.log('🔐 New: Confirmation system for sensitive operations');
+    console.log('⚡ VERSION 2024: Enhanced with immediate responses and confirmation system');
 });
