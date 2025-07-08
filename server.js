@@ -110,7 +110,7 @@ async function detectConfirmation(message) {
     }
 }
 
-// פונקציה ליצירת הודעת אישור משופרת עם שם לקוח וערכים קיימים
+// פונקציה ליצירת הודעת אישור משופרת עם שם לקוח וערכים קיימים - עם טיפול בשגיאות
 async function createDetailedConfirmationMessage(toolUses, messages) {
     let actionDescription = '';
     
@@ -157,6 +157,7 @@ async function createDetailedConfirmationMessage(toolUses, messages) {
                                 }
                             } catch (e) {
                                 // התעלם משגיאות parsing
+                                console.log('⚠️ שגיאה ב-parsing של תוצאת חיפוש, ממשיך...');
                             }
                         }
                     }
@@ -164,10 +165,10 @@ async function createDetailedConfirmationMessage(toolUses, messages) {
                 }
             }
             
-            // אם לא מצאנו בהיסטוריה, נבצע חיפוש חדש כדי לקבל ערכים עדכניים
+            // ⭐ תיקון קריטי: אם לא מצאנו בהיסטוריה, ננסה לחפש אבל עם טיפול בשגיאות
             if (!customerName || Object.keys(currentValues).length === 0) {
                 try {
-                    console.log('🔍 מחפש נתונים עדכניים לרשומה:', recordId);
+                    console.log('🔍 מנסה לקבל נתונים עדכניים לרשומה:', recordId);
                     const response = await axios.get(
                         `https://api.airtable.com/v0/appL1FfUaRbmPNI01/${tableId}/${recordId}`,
                         {
@@ -184,6 +185,8 @@ async function createDetailedConfirmationMessage(toolUses, messages) {
                     }
                 } catch (error) {
                     console.error('❌ שגיאה בקבלת נתונים עדכניים:', error.message);
+                    // 🔧 במקרה של שגיאה - פשוט ממשיכים בלי הנתונים העדכניים
+                    console.log('⚠️ ממשיך בלי נתונים עדכניים מהשרת');
                 }
             }
             
