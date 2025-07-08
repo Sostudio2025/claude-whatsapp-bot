@@ -804,7 +804,7 @@ app.post('/claude-query', async(req, res) => {
             steps: stepCount || 0
         };
 
-        res.json(responseData);
+        return res.json(responseData);
 
     } catch (error) {
         console.error('❌ שגיאה כללית:', error);
