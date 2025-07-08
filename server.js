@@ -5,9 +5,26 @@ const fs = require('fs');
 const path = require('path');
 
 function loadConfig() {
+    // בשרת נשתמש במשתני סביבה
+    if (process.env.NODE_ENV === 'production') {
+        return {
+            CLAUDE_API_KEY: process.env.CLAUDE_API_KEY,
+            AIRTABLE_API_KEY: process.env.AIRTABLE_API_KEY
+        };
+    }
+    
+    // בפיתוח נשתמש בקובץ (אם קיים)
     const configPath = path.join(__dirname, 'env_config.txt');
+    if (!fs.existsSync(configPath)) {
+        // אם אין קובץ, נשתמש גם במשתני סביבה
+        return {
+            CLAUDE_API_KEY: process.env.CLAUDE_API_KEY,
+            AIRTABLE_API_KEY: process.env.AIRTABLE_API_KEY
+        };
+    }
+    
+    // קריאה מקובץ רק אם הוא קיים
     const configData = fs.readFileSync(configPath, 'utf8');
-
     const config = {};
     configData.split('\n').forEach(line => {
         const parts = line.split('=');
