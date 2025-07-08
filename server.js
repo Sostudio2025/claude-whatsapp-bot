@@ -50,14 +50,6 @@ const anthropic = new Anthropic({
 
 const conversationMemory = new Map();
 
-// מערך של הודעות ראשוניות לפי הקשר
-const initialMessages = {
-    search: ['🔍 אני מחפש בשבילך...', '🔍 סריקת המערכת...', '🔍 מחפש את המידע...'],
-    update: ['⏳ אני על זה, מעדכן...', '🔄 מתחיל לעדכן...', '⚙️ עובד על העדכון...'],
-    create: ['🆕 יוצר עבורך...', '📝 מכין רשומה חדשה...', '🔨 בונה את המידע...'],
-    general: ['💭 אני חושב...', '⏳ רגע, בודק...', '🤖 מעבד את הבקשה...']
-};
-
 // מערכת אישורים - זיכרון זמני לבקשות מחכות לאישור
 const pendingActions = new Map();
 
@@ -79,58 +71,6 @@ function addToConversationHistory(senderId, role, content) {
     if (history.length > 10) {
         history.splice(0, history.length - 10);
     }
-}
-
-// פונקציה חכמה לזיהוי סוג הפעולה באמצעות Claude
-async function detectActionType(message) {
-    try {
-        const prompt = `נתח את ההודעה הבאה וזהה את סוג הפעולה המבוקשת:
-
-"${message}"
-
-החזר רק אחת מהאפשרויות הבאות:
-- search (אם זה בקשה לחיפוש, הצגת מידע, או קבלת פרטים)
-- update (אם זה בקשה לעדכון, שינוי, או התאמה של מידע קיים)
-- create (אם זה בקשה ליצירה, הוספה, רישום, או העברת דמי רצינות)
-- general (אם זה שאלה כללית או בקשה לא ברורה)
-
-החזר רק את המילה המתאימה:`;
-
-        const response = await anthropic.messages.create({
-            model: "claude-3-5-sonnet-20241022",
-            max_tokens: 50,
-            messages: [{
-                role: 'user',
-                content: prompt
-            }]
-        });
-
-        const actionType = response.content[0].text.trim().toLowerCase();
-        
-        // בדיקת תקינות
-        if (['search', 'update', 'create', 'general'].includes(actionType)) {
-            return actionType;
-        }
-        
-        return 'general';
-        
-    } catch (error) {
-        console.error('❌ שגיאה בזיהוי סוג פעולה:', error);
-        return 'general';
-    }
-}
-
-// פונקציה לבחירת הודעה ראשונית
-function getInitialMessage(actionType) {
-    const messages = initialMessages[actionType];
-    return messages[Math.floor(Math.random() * messages.length)];
-}
-
-// פונקציה לזיהוי אם צריך אישור
-function requiresConfirmation(toolsExecuted) {
-    return toolsExecuted.includes('create_record') || 
-           toolsExecuted.includes('update_record') || 
-           toolsExecuted.includes('delete_records');
 }
 
 // פונקציה חכמה לזיהוי אישור באמצעות Claude
@@ -171,12 +111,11 @@ async function detectConfirmation(message) {
     }
 }
 
-// פונקציה משופרת ליצירת הודעת אישור מפורטת
-function createDetailedConfirmationMessage(toolUses, originalMessage) {
-    let actionDescription = `🔍 בקשה: "${originalMessage}"\n\n`;
-    actionDescription += 'אני מתכנן לבצע:\n';
+// פונקציה משופרת ליצירת הודעת אישור מפורטת ונוחה לקריאה
+async function createDetailedConfirmationMessage(toolUses, originalMessage, messages) {
+    let actionDescription = '';
     
-    toolUses.forEach(tool => {
+    for (const tool of toolUses) {
         if (tool.name === 'create_record') {
             const tableId = tool.input.tableId;
             const fields = tool.input.fields;
@@ -190,62 +129,115 @@ function createDetailedConfirmationMessage(toolUses, originalMessage) {
             else if (tableId === 'tbl7etO9Yn3VH9QpT') tableName = 'משרד';
             else if (tableId === 'tblNJzcMRtyMdH14d') tableName = 'פרח';
             
-            actionDescription += `• ➕ יצירת ${tableName} חדשה\n`;
+            actionDescription += `אני עומד ליצור ${tableName} חדשה`;
             
             // הוסף פרטים על השדות החשובים
-            if (fields['שם מלא']) actionDescription += `  - שם: ${fields['שם מלא']}\n`;
-            if (fields['שם העסקה']) actionDescription += `  - עסקה: ${fields['שם העסקה']}\n`;
-            if (fields['שם הפרויקט']) actionDescription += `  - פרויקט: ${fields['שם הפרויקט']}\n`;
+            if (fields['שם מלא']) actionDescription += ` עבור ${fields['שם מלא']}`;
+            if (fields['שם העסקה']) actionDescription += ` - עסקה: ${fields['שם העסקה']}`;
+            if (fields['שם הפרויקט']) actionDescription += ` - פרויקט: ${fields['שם הפרויקט']}`;
             
         } else if (tool.name === 'update_record') {
             const tableId = tool.input.tableId;
             const fields = tool.input.fields;
             const recordId = tool.input.recordId;
             
-            // זיהוי טבלה
-            let tableName = 'רשומה';
-            if (tableId === 'tblSgYN8CbQcxeT0j') tableName = 'עסקה';
-            else if (tableId === 'tblcTFGg6WyKkO5kq') tableName = 'לקוח';
-            else if (tableId === 'tbl9p6XdUrecy2h7G') tableName = 'פרויקט';
-            else if (tableId === 'tbl3ZCmqfit2L0iQ0') tableName = 'ליד';
-            else if (tableId === 'tbl7etO9Yn3VH9QpT') tableName = 'משרד';
-            else if (tableId === 'tblNJzcMRtyMdH14d') tableName = 'פרח';
+            // חפש בהיסטוריית ההודעות את פרטי הרשומה שנמצאה
+            let customerName = '';
+            let currentValues = {};
             
-            actionDescription += `• 🔄 עדכון ${tableName} (ID: ${recordId.substring(0, 8)}...)\n`;
+            // עבור על ההיסטוריה מהסוף להתחלה למצוא את תוצאת החיפוש האחרונה
+            for (let i = messages.length - 1; i >= 0; i--) {
+                const msg = messages[i];
+                if (msg.role === 'user' && Array.isArray(msg.content)) {
+                    for (const content of msg.content) {
+                        if (content.type === 'tool_result') {
+                            try {
+                                const result = JSON.parse(content.content);
+                                if (result.records && Array.isArray(result.records)) {
+                                    // מצא את הרשומה עם אותו ID
+                                    const record = result.records.find(r => r.id === recordId);
+                                    if (record && record.fields) {
+                                        customerName = record.fields['שם מלא'] || record.fields['שם העסקה'] || record.fields['שם הפרויקט'] || '';
+                                        currentValues = record.fields;
+                                        break;
+                                    }
+                                }
+                            } catch (e) {
+                                // התעלם משגיאות parsing
+                            }
+                        }
+                    }
+                    if (customerName) break;
+                }
+            }
             
-            // הוסף פרטים על מה משתנה
+            // בנה הודעה ידידותית
+            const fieldUpdates = [];
             Object.keys(fields).forEach(fieldName => {
-                const value = fields[fieldName];
+                const newValue = fields[fieldName];
+                const currentValue = currentValues[fieldName];
                 
-                // הצג עדכונים חשובים
-                if (fieldName.includes('סטטוס') || fieldName.includes('Status')) {
-                    actionDescription += `  - עדכון ${fieldName} ל: ${value}\n`;
-                } else if (fieldName.includes('גודל') || fieldName.includes('Size')) {
-                    actionDescription += `  - עדכון ${fieldName} ל: ${value}\n`;
-                } else if (fieldName.includes('טלפון') || fieldName.includes('Phone')) {
-                    actionDescription += `  - עדכון ${fieldName} ל: ${value}\n`;
-                } else if (fieldName.includes('אימייל') || fieldName.includes('Email')) {
-                    actionDescription += `  - עדכון ${fieldName} ל: ${value}\n`;
-                } else if (fieldName.includes('מחיר') || fieldName.includes('Price')) {
-                    actionDescription += `  - עדכון ${fieldName} ל: ${value}\n`;
-                } else if (fieldName.includes('כתובת') || fieldName.includes('Address')) {
-                    actionDescription += `  - עדכון ${fieldName} ל: ${value}\n`;
-                } else if (fieldName.includes('הערות') || fieldName.includes('Notes')) {
-                    const shortValue = typeof value === 'string' && value.length > 30 ? value.substring(0, 30) + '...' : value;
-                    actionDescription += `  - עדכון ${fieldName} ל: ${shortValue}\n`;
-                } else if (typeof value === 'string' && value.length < 100) {
-                    actionDescription += `  - עדכון ${fieldName} ל: ${value}\n`;
+                if (fieldName.includes('גודל משרד רצוי') || fieldName === 'גודל משרד רצוי') {
+                    if (currentValue) {
+                        fieldUpdates.push(`גודל המשרד הרצוי מ-${currentValue} ל-${newValue}`);
+                    } else {
+                        fieldUpdates.push(`גודל המשרד הרצוי ל-${newValue}`);
+                    }
+                } else if (fieldName.includes('טלפון') || fieldName === 'טלפון') {
+                    if (currentValue) {
+                        fieldUpdates.push(`הטלפון מ-${currentValue} ל-${newValue}`);
+                    } else {
+                        fieldUpdates.push(`הטלפון ל-${newValue}`);
+                    }
+                } else if (fieldName.includes('אימייל') || fieldName === 'אימייל') {
+                    if (currentValue) {
+                        fieldUpdates.push(`האימייל מ-${currentValue} ל-${newValue}`);
+                    } else {
+                        fieldUpdates.push(`האימייל ל-${newValue}`);
+                    }
+                } else if (fieldName.includes('סטטוס') || fieldName === 'סטטוס') {
+                    if (currentValue) {
+                        fieldUpdates.push(`הסטטוס מ-${currentValue} ל-${newValue}`);
+                    } else {
+                        fieldUpdates.push(`הסטטוס ל-${newValue}`);
+                    }
+                } else if (fieldName.includes('כתובת') || fieldName === 'כתובת לקוח') {
+                    if (currentValue) {
+                        fieldUpdates.push(`הכתובת מ-${currentValue} ל-${newValue}`);
+                    } else {
+                        fieldUpdates.push(`הכתובת ל-${newValue}`);
+                    }
+                } else if (fieldName.includes('הערות') || fieldName === 'הערות כלליות') {
+                    const shortNewValue = typeof newValue === 'string' && newValue.length > 30 ? newValue.substring(0, 30) + '...' : newValue;
+                    fieldUpdates.push(`ההערות ל-${shortNewValue}`);
                 } else {
-                    actionDescription += `  - עדכון ${fieldName}\n`;
+                    // שדה כללי
+                    if (currentValue && typeof newValue === 'string' && newValue.length < 50) {
+                        fieldUpdates.push(`${fieldName} מ-${currentValue} ל-${newValue}`);
+                    } else if (typeof newValue === 'string' && newValue.length < 50) {
+                        fieldUpdates.push(`${fieldName} ל-${newValue}`);
+                    } else {
+                        fieldUpdates.push(`${fieldName}`);
+                    }
                 }
             });
             
+            // בנה את ההודעה הסופית
+            if (customerName && fieldUpdates.length > 0) {
+                actionDescription += `אני עומד לעדכן ל${customerName} את ${fieldUpdates.join(' ו')}`;
+            } else if (fieldUpdates.length > 0) {
+                actionDescription += `אני עומד לעדכן את ${fieldUpdates.join(' ו')}`;
+            } else {
+                actionDescription += `אני עומד לעדכן רשומה`;
+                if (customerName) actionDescription += ` של ${customerName}`;
+            }
+            
         } else if (tool.name === 'delete_records') {
-            actionDescription += `• 🗑️ מחיקת רשומה\n`;
+            actionDescription += `אני עומד למחוק רשומה`;
         }
-    });
+    }
     
-    actionDescription += '\n❓ האם אתה רוצה שאמשיך? (כן/לא)';
+    actionDescription += '\n\n❓ האם אתה מאשר? (כן/לא)';
     return actionDescription;
 }
 
@@ -446,7 +438,7 @@ async function updateRecord(baseId, tableId, recordId, fields) {
         // ראשית - בדוק שהרשומה קיימת בטבלה
         const checkUrl = 'https://api.airtable.com/v0/' + baseId + '/' + tableId + '/' + recordId;
         try {
-            const checkResponse = await axios.get(checkUrl, {
+            await axios.get(checkUrl, {
                 headers: {
                     'Authorization': 'Bearer ' + config.AIRTABLE_API_KEY
                 }
@@ -682,9 +674,9 @@ async function handleToolUse(toolUse) {
     }
 }
 
-// SystemPrompt כללי ומשופר
+// SystemPrompt משופר ומפושט
 const systemPrompt = 'אתה עוזר חכם שמחובר לאיירטיבל.\n\n' +
-    '🚨 חוקים קריטיים לעבודה עם רשומות:\n' +
+    '🚨 חוקים קריטיים:\n' +
     '1. כאשר מוצאים רשומה - מיד בצע את הפעולה הנדרשת!\n' +
     '2. אל תחזור ותחפש את אותה רשומה פעמיים!\n' +
     '3. אל תאמר "עכשיו אעדכן" - פשוט עדכן!\n' +
@@ -692,13 +684,8 @@ const systemPrompt = 'אתה עוזר חכם שמחובר לאיירטיבל.\n\
     '5. השתמש במזהה הרשומה (ID) שקיבלת מהחיפוש!\n' +
     '6. אחרי כל פעולה - הודע בבירור מה קרה!\n' +
     '7. 🔴 חשוב ביותר: תמיד עדכן רשומה באותה טבלה שבה מצאת אותה!\n' +
-    '8. 🔴 זכור את ה-tableId מתוצאת החיפוש והשתמש בו לעדכון!\n' +
-    '9. 🔴 אם חיפשת בטבלה X - עדכן בטבלה X (אותו tableId)!\n\n' +
-    '📝 תהליך נכון לעדכון כל רשומה:\n' +
-    '• קבע איזה סוג רשומה זה (לקוח/עסקה/פרויקט/ליד/משרד)\n' +
-    '• חפש בטבלה המתאימה לסוג הרשומה\n' +
-    '• קבל record ID + tableId מתוצאת החיפוש\n' +
-    '• עדכן באותו tableId שבו חיפשת!\n\n' +
+    '8. 🔴 אם חיפשת בטבלה X - עדכן בטבלה X!\n' +
+    '9. 🔴 אל תיכנס ללולאות - אם מצאת רשומה, עדכן אותה מיד!\n\n' +
     '🎯 תרחיש מיוחד - לקוח השלים הרשמה / העביר דמי רצינות:\n' +
     'כשאומרים לך "לקוח השלים הרשמה" או "העביר דמי רצינות":\n' +
     '1. מצא את הלקוח בטבלת הלקוחות (search_airtable)\n' +
@@ -706,11 +693,22 @@ const systemPrompt = 'אתה עוזר חכם שמחובר לאיירטיבל.\n\
     '3. בדוק אם יש עסקה קיימת (search_transactions)\n' +
     '4. אם יש עסקה קיימת - הודע: "✅ כבר קיימת עסקה עבור [שם לקוח] ו[שם פרויקט]"\n' +
     '5. אם אין עסקה - צור עסקה חדשה (create_record)\n' +
-    '6. אם הלקוח לא בסטטוס "לקוח בתהליך" - עדכן (update_record)\n' +
-    '⚠️ חשוב: אחרי כל בדיקת עסקה - הודע מה המצב!\n' +
-    '⚠️ אם נמצאה עסקה קיימת - אמר זאת בבירור!\n\n' +
+    '6. אם הלקוח לא בסטטוס "לקוח בתהליך" - עדכן (update_record)\n\n' +
     'Base ID: appL1FfUaRbmPNI01\n\n' +
     '📋 טבלאות ושדות זמינים:\n\n' +
+    '👥 לקוחות (Customers) - tblcTFGg6WyKkO5kq:\n' +
+    '- מזהה לקוח (ID_Client)\n' +
+    '- שם מלא\n' +
+    '- טלפון\n' +
+    '- אימייל\n' +
+    '- סטטוס (ערכים: לקוח בתהליך, לא התקדם, קבע פגישה)\n' +
+    '- מועד פגישה ראשונה\n' +
+    '- כתובת לקוח\n' +
+    '- גודל משרד רצוי\n' +
+    '- הערות כלליות\n' +
+    '- פרויקט מקור\n' +
+    '- תאריך יצירה\n' +
+    '- תאריך עדכון אחרון\n\n' +
     '🏢 עסקאות (Transactions) - tblSgYN8CbQcxeT0j:\n' +
     '- מזהה עסקה (ID_Deal)\n' +
     '- שם העסקה\n' +
@@ -719,8 +717,6 @@ const systemPrompt = 'אתה עוזר חכם שמחובר לאיירטיבל.\n\
     '- שם הפרויקט (from מזהה פרויקט (ID_Project))\n' +
     '- מזהה לקוח ראשי (ID_Client)\n' +
     '- שם מלא (from מזהה לקוח ראשי (ID_Client))\n' +
-    '- מזהה לקוח משני (ID_Client)\n' +
-    '- שם מלא (from מזהה לקוח משני (ID_Client))\n' +
     '- סטטוס לקוח בעסקה (ערכים: לא מתקדם, השלים הרשמה, רכש)\n' +
     '- גודל המשרד\n' +
     '- קומה\n' +
@@ -736,28 +732,8 @@ const systemPrompt = 'אתה עוזר חכם שמחובר לאיירטיבל.\n\
     '- דמי רצינות שולמו\n' +
     '- שיטת תשלום דמי רצינות (ערכים: צ׳ק, העברה בנקאית)\n' +
     '- תאריך השלמת הרשמה\n' +
-    '- עורך דין - לקוח\n' +
-    '- טלפון - עו״ד לקוח\n' +
-    '- מייל - עו״ד לקוח\n' +
-    '- סטטוס משפטי (ערכים: לקוח מחכה להסכם, לקוח קיבל הסכם - מחכים להערות עו״ד, וכו\')\n' +
-    '- סטטוס בנק (ערכים: בנק קיבל פרטי לקוח, ממתינים למסמכים, וכו\')\n' +
-    '- תאריך חתימת עסקה\n' +
-    '- משרד מקושר\n' +
     '- הערות כלליות\n' +
     '- הערות AI\n\n' +
-    '👥 לקוחות (Customers) - tblcTFGg6WyKkO5kq:\n' +
-    '- מזהה לקוח (ID_Client)\n' +
-    '- שם מלא\n' +
-    '- טלפון\n' +
-    '- אימייל\n' +
-    '- סטטוס (ערכים: לקוח בתהליך, לא התקדם, קבע פגישה)\n' +
-    '- מועד פגישה ראשונה\n' +
-    '- כתובת לקוח\n' +
-    '- גודל משרד רצוי\n' +
-    '- הערות כלליות\n' +
-    '- פרויקט מקור\n' +
-    '- תאריך יצירה\n' +
-    '- תאריך עדכון אחרון\n\n' +
     '🏗️ פרויקטים (Projects) - tbl9p6XdUrecy2h7G:\n' +
     '- מזהה פרויקט (ID_Project)\n' +
     '- שם הפרויקט\n' +
@@ -766,63 +742,9 @@ const systemPrompt = 'אתה עוזר חכם שמחובר לאיירטיבל.\n\
     '- סטטוס (ערכים: פעיל)\n' +
     '- מנהל מכירות פרונטלי\n' +
     '- שם היזם\n' +
-    '- שם איש קשר\n' +
-    '- טלפון איש קשר\n' +
-    '- מייל איש קשר\n' +
-    '- מנהל מכירות טלפוני\n' +
-    '- בנק מטפל\n' +
     '- הערות כלליות\n' +
     '- תאריך יצירה\n' +
     '- תאריך עדכון אחרון\n\n' +
-    '📞 לידים (Leads) - tbl3ZCmqfit2L0iQ0:\n' +
-    '- מזהה ליד (ID_Lead)\n' +
-    '- שם מלא\n' +
-    '- טלפון\n' +
-    '- אימייל\n' +
-    '- תאריך יצירת ליד\n' +
-    '- סטטוס ליד\n' +
-    '- יזם\n' +
-    '- מזהה פרויקט\n' +
-    '- שם הפרויקט\n' +
-    '- הערות כלליות\n' +
-    '- גודל משרד רצוי\n\n' +
-    '🏢 משרדים (Offices) - tbl7etO9Yn3VH9QpT:\n' +
-    '- מזהה משרד (Office_ID)\n' +
-    '- שם הפרויקט\n' +
-    '- שם המשרד\n' +
-    '- סטטוס משרד (ערכים: פנוי, מכור)\n' +
-    '- כיוון\n' +
-    '- גודל המשרד\n' +
-    '- שם איש קשר\n' +
-    '- טלפון איש קשר\n' +
-    '- מייל איש קשר\n' +
-    '- הערות\n' +
-    '- תאריך יצירה\n' +
-    '- תאריך עדכון אחרון\n\n' +
-    '🌸 פרחים (Flowers) - tblNJzcMRtyMdH14d:\n' +
-    '- מזהה פרחים (ID_Flowers)\n' +
-    '- מזהה פרויקט (ID_Project)\n' +
-    '- מזהה לקוח (ID_Client)\n' +
-    '- תאריך פרחים\n' +
-    '- נשלחו פרחים\n' +
-    '- סטטוס פרחים\n' +
-    '- כתובת למשלוח\n' +
-    '- הערות\n' +
-    '- תאריך יצירה\n' +
-    '- תאריך עדכון אחרון\n\n' +
-    '⚠️ בקרה (Control) - tblYxAM0xNp0z9EoN:\n' +
-    '- מזהה בקרה (ID_Control)\n' +
-    '- סטטוס\n' +
-    '- תאריך יצירה\n' +
-    '- הערת איש מכירות\n' +
-    '- שגיאה סוכן\n' +
-    '- הערת סוכן\n\n' +
-    '👨‍💼 מנהלים/עובדים - tbl8JT0j7C35yMcc2:\n' +
-    '- מזהה עובד\n' +
-    '- שם מלא\n' +
-    '- מספר טלפון\n' +
-    '- כתובת אימייל\n' +
-    '- סוג (ערכים: מנהל פרונטלי, מנהל טלפוני)\n\n' +
     '🛠️ כלים זמינים:\n' +
     '- search_airtable: חיפוש רשומות\n' +
     '- search_transactions: חיפוש עסקות לפי לקוח ופרויקט\n' +
@@ -830,63 +752,20 @@ const systemPrompt = 'אתה עוזר חכם שמחובר לאיירטיבל.\n\
     '- create_record: יצירת רשומה חדשה\n' +
     '- update_record: עדכון רשומה קיימת (השתמש בזה!)\n' +
     '- get_table_fields: קבלת שדות\n\n' +
-    'דוגמאות לשדות קשורים:\n' +
-    '- מזהה פרויקט (ID_Project): ["recLF0iMhQEx6lMqX"] (מגדל תל אביב)\n' +
-    '- מזהה לקוח (ID_Client): ["rec0GDfLEzXXCUX9X"] (שי טוקטלי)\n' +
-    '- סטטוס עסקה: "בתהליך" (לא "התקדם" או כל דבר אחר)\n' +
-    '- סטטוס לקוח בעסקה: "לא מתקדם" (לא "לא התקדם")\n\n' +
-    '⚡ דוגמאות נכונות לעדכונים:\n\n' +
-    '🔹 עדכון לקוח:\n' +
+    '⚡ דוגמה נכונה לעדכון:\n' +
     'בקשה: "תשנה לאוראל מזרחי את הטלפון ל 050-1234567"\n' +
     '1. search_airtable ב-tblcTFGg6WyKkO5kq עבור "אוראל מזרחי"\n' +
-    '2. קבל record ID + tableId (tblcTFGg6WyKkO5kq)\n' +
-    '3. update_record ב-tblcTFGg6WyKkO5kq עם השדה "טלפון": "050-1234567"\n\n' +
-    '🔹 עדכון עסקה:\n' +
-    'בקשה: "תעדכן את סטטוס העסקה של דני כהן לנחתמה"\n' +
-    '1. search_airtable ב-tblSgYN8CbQcxeT0j עבור "דני כהן"\n' +
-    '2. קבל record ID + tableId (tblSgYN8CbQcxeT0j)\n' +
-    '3. update_record ב-tblSgYN8CbQcxeT0j עם השדה "סטטוס עסקה": "נחתמה"\n\n' +
-    '🔹 עדכון פרויקט:\n' +
-    'בקשה: "תשנה את מנהל המכירות של פרויקט X"\n' +
-    '1. search_airtable ב-tbl9p6XdUrecy2h7G עבור שם הפרויקט\n' +
-    '2. קבל record ID + tableId (tbl9p6XdUrecy2h7G)\n' +
-    '3. update_record ב-tbl9p6XdUrecy2h7G עם השדה המתאים\n\n' +
+    '2. קבל record ID מטבלת הלקוחות\n' +
+    '3. update_record ב-tblcTFGg6WyKkO5kq עם השדה "טלפון": "050-1234567"\n' +
+    '4. סיום - אל תחזור על הפעולה!\n\n' +
     '🇮🇱 ענה רק בעברית';
-
-// endpoint חדש לשליחת הודעות מיידיות מ-n8n
-app.post('/send-immediate-response', async(req, res) => {
-    try {
-        const { message, chatId } = req.body;
-        
-        // זיהוי סוג הפעולה באמצעות Claude
-        const actionType = await detectActionType(message);
-        
-        // בחירת הודעה מתאימה
-        const immediateResponse = getInitialMessage(actionType);
-        
-        console.log('📱 שליחת הודעה מיידית:', immediateResponse, 'לצ\'אט:', chatId);
-        
-        res.json({
-            success: true,
-            immediateResponse: immediateResponse,
-            actionType: actionType
-        });
-        
-    } catch (error) {
-        console.error('❌ שגיאה בהודעה מיידית:', error);
-        res.json({
-            success: false,
-            error: error.message
-        });
-    }
-});
 
 app.post('/claude-query', async(req, res) => {
     try {
         const messageData = req.body;
         const message = messageData.message;
         const sender = messageData.sender || 'default';
-        const chatId = messageData.chatId; // נדרש לאישורים
+        const chatId = messageData.chatId;
 
         console.log('📨 הודעה מ-' + sender + ':', message);
 
@@ -941,8 +820,8 @@ app.post('/claude-query', async(req, res) => {
         let conversationFinished = false;
         let stepCount = 0;
 
-        // לולאה לביצוע הפעולות
-        while (!conversationFinished && messages.length < 30) {
+        // לולאה מוגבלת לביצוע הפעולות - מקסימום 5 שלבים
+        while (!conversationFinished && stepCount < 5) {
             stepCount++;
             console.log('🔄 שלב', stepCount);
 
@@ -983,8 +862,8 @@ app.post('/claude-query', async(req, res) => {
             );
 
             if (needsConfirmation) {
-                // יצירת הודעת אישור מפורטת
-                const actionDescription = createDetailedConfirmationMessage(toolUses, message);
+                // יצירת הודעת אישור מפורטת עם שם הלקוח והערכים הקיימים
+                const actionDescription = await createDetailedConfirmationMessage(toolUses, message, messages);
                 
                 // שמור את הפעולה בזיכרון
                 pendingActions.set(sender, {
@@ -1046,24 +925,20 @@ app.post('/claude-query', async(req, res) => {
             }
 
             console.log('📊 כלים שהופעלו עד כה:', toolsExecuted);
+
+            // אם ביצענו עדכון או יצירה - סיים
+            if (toolsExecuted.includes('update_record') || toolsExecuted.includes('create_record')) {
+                conversationFinished = true;
+                finalResponse = 'הפעולה בוצעה בהצלחה!';
+                console.log('✅ פעולה מרכזית הושלמה - מסיים');
+                break;
+            }
         }
 
         // הכן תגובה סופית
-        if (messages.length >= 30 && !finalResponse) {
-            console.log('⚠️ הגענו למגבלת הודעות - מכין תגובה סופית');
-            const hasSearchCustomer = toolsExecuted.includes('search_airtable');
-            const hasSearchTransactions = toolsExecuted.includes('search_transactions');
-            const hasCreateTransaction = toolsExecuted.includes('create_record');
-            
-            if (hasSearchCustomer && hasSearchTransactions) {
-                if (hasCreateTransaction) {
-                    finalResponse = '✅ הרשמת הלקוח הושלמה בהצלחה! נוצרה עסקה חדשה במערכת.';
-                } else {
-                    finalResponse = '✅ נמצאה עסקה קיימת במערכת עבור הלקוח והפרויקט. הלקוח כבר רשום.';
-                }
-            } else {
-                finalResponse = 'הפעולה בוצעה חלקית. אנא בדוק את התוצאות במערכת.';
-            }
+        if (stepCount >= 5 && !finalResponse) {
+            console.log('⚠️ הגענו למגבלת שלבים - מכין תגובה סופית');
+            finalResponse = 'הפעולה בוצעה חלקית. אנא בדוק את התוצאות במערכת.';
         }
 
         if (!finalResponse || finalResponse.trim() === '') {
@@ -1138,8 +1013,6 @@ app.listen(3000, '0.0.0.0', () => {
     console.log('📝 Functions: search, get records, create, update, get fields');
     console.log('🧪 Test: GET /test-airtable');
     console.log('🧠 Memory: POST /clear-memory, GET /memory');
-    console.log('📱 New: POST /send-immediate-response - for immediate responses');
-    console.log('🔐 New: Enhanced confirmation system with detailed descriptions');
-    console.log('🛡️ New: Record validation to prevent table mismatch errors');
-    console.log('⚡ VERSION 2024: Universal solution for all record operations');
+    console.log('🔐 Confirmation system for sensitive operations');
+    console.log('⚡ VERSION 2024: Simplified - no immediate responses, fixed loops');
 });
