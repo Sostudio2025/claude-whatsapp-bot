@@ -124,7 +124,6 @@ async function searchAirtable(baseId, tableId, searchTerm) {
 
         console.log('✅ נמצאו', filteredRecords.length, 'רשומות');
 
-        // החזר מידע מפורט יותר כדי שClaude יוכל לבצע פעולות
         return {
             found: filteredRecords.length,
             records: filteredRecords.map(record => ({
@@ -189,11 +188,6 @@ async function updateRecord(baseId, tableId, recordId, fields) {
         console.log('🔄 מעדכן רשומה:', recordId);
         console.log('📝 שדות חדשים:', JSON.stringify(fields, null, 2));
 
-        // בדיקה שה-Record ID תקין
-        if (!recordId || recordId.length < 14 || !recordId.startsWith('rec')) {
-            throw new Error('Record ID לא תקין: ' + recordId + ' - צריך להיות באורך 17 תווים ולהתחיל ב-rec');
-        }
-
         const url = 'https://api.airtable.com/v0/' + baseId + '/' + tableId;
         const response = await axios.patch(url, {
             records: [{
@@ -211,21 +205,8 @@ async function updateRecord(baseId, tableId, recordId, fields) {
         return response.data.records[0];
     } catch (error) {
         console.error('❌ שגיאה בעדכון:', error.response ? error.response.data : error.message);
-        let errorMessage = error.message;
-        
-        if (error.response && error.response.data && error.response.data.error) {
-            errorMessage = error.response.data.error.message;
-            
-            // הודעות שגיאה ידידותיות
-            if (errorMessage.includes('cannot accept the provided value')) {
-                errorMessage = 'שגיאה: הערך שסופק לא תואם לסוג השדה. ייתכן שהשדה מקבל רק ערכים מסוימים.';
-            } else if (errorMessage.includes('Unknown field name')) {
-                errorMessage = 'שגיאה: השדה שצוין לא קיים בטבלה.';
-            } else if (errorMessage.includes('does not exist in this table')) {
-                errorMessage = 'שגיאה: הרשומה לא קיימת בטבלה.';
-            }
-        }
-        
+        const errorMessage = error.response && error.response.data && error.response.data.error ?
+            error.response.data.error.message : error.message;
         throw new Error('Update record failed: ' + errorMessage);
     }
 }
@@ -483,76 +464,28 @@ app.post('/claude-query', async(req, res) => {
 
         console.log('📨 הודעה מ-' + sender + ':', message);
 
-        // ולידציה בסיסית של הנתונים
-        if (!message || typeof message !== 'string') {
-            return res.status(400).json({
-                success: false,
-                error: 'Invalid message format'
-            });
-        }
-
-        // 🧹 נקה זיכרון אם זו בקשה חדשה (לא אישור)
-        const isConfirmation = message.toLowerCase().includes('כן') || 
-                              message.toLowerCase().includes('לא') || 
-                              message.toLowerCase().includes('אישור') ||
-                              message.toLowerCase().includes('ביטול') ||
-                              message.toLowerCase().includes('אוקיי') ||
-                              message.toLowerCase().includes('בצע') ||
-                              message.toLowerCase().includes('עצור');
-
-        if (!isConfirmation) {
-            // זו בקשה חדשה - נקה זיכרון אישורים ישנים
-            if (pendingActions.has(sender)) {
-                console.log('🧹 מנקה זיכרון אישורים ישנים עבור בקשה חדשה:', message);
-                pendingActions.delete(sender);
-            }
-        }
-
         // בדיקה אם זה אישור לפעולה מחכה
-        if (pendingActions.has(sender) && isConfirmation) {
-        // בדיקה אם זה אישור לפעולה מחכה
-        if (pendingActions.has(sender) && isConfirmation) {
-            const pendingAction = pendingActions.get(sender);
-            
+        if (pendingActions.has(sender)) {
             if (message.toLowerCase().includes('כן') || message.toLowerCase().includes('אישור') || 
                 message.toLowerCase().includes('אוקיי') || message.toLowerCase().includes('בצע')) {
                 
+                const pendingAction = pendingActions.get(sender);
                 console.log('✅ מבצע פעולה מאושרת עבור:', sender);
                 pendingActions.delete(sender);
                 
                 // בצע את הפעולה המאושרת
                 try {
-                    let successCount = 0;
-                    let errorMessages = [];
-                    
                     for (const toolUse of pendingAction.toolUses) {
-                        try {
-                            console.log('🛠️ מפעיל כלי מאושר:', toolUse.name, 'עם פרמטרים:', JSON.stringify(toolUse.input, null, 2));
-                            const result = await handleToolUse(toolUse);
-                            console.log('✅ כלי מאושר הושלם:', toolUse.name, 'תוצאה:', JSON.stringify(result, null, 2));
-                            successCount++;
-                        } catch (toolError) {
-                            console.error('❌ שגיאה בכלי מאושר:', toolUse.name, toolError.message);
-                            errorMessages.push(`${toolUse.name}: ${toolError.message}`);
-                        }
+                        await handleToolUse(toolUse);
+                        console.log('✅ כלי מאושר הושלם:', toolUse.name);
                     }
                     
-                    if (successCount > 0 && errorMessages.length === 0) {
-                        return res.json({
-                            success: true,
-                            response: '✅ הפעולה בוצעה בהצלחה!',
-                            actionCompleted: true
-                        });
-                    } else if (errorMessages.length > 0) {
-                        return res.json({
-                            success: false,
-                            response: '❌ שגיאה בביצוע הפעולה:\n' + errorMessages.join('\n'),
-                            actionFailed: true
-                        });
-                    }
-                    
+                    return res.json({
+                        success: true,
+                        response: '✅ הפעולה בוצעה בהצלחה!',
+                        actionCompleted: true
+                    });
                 } catch (error) {
-                    console.error('❌ שגיאה כללית בביצוע פעולה מאושרת:', error);
                     return res.json({
                         success: false,
                         response: '❌ אירעה שגיאה בביצוע הפעולה: ' + error.message
@@ -568,14 +501,22 @@ app.post('/claude-query', async(req, res) => {
                     response: '❌ הפעולה בוטלה לפי בקשתך',
                     actionCancelled: true
                 });
+            } else {
+                // אם זה נראה כמו בקשה חדשה - נקה זיכרון ועבד על הבקשה החדשה
+                if (message.includes('עדכן') || message.includes('שנה') || message.includes('תמצא') || 
+                    message.includes('חפש') || message.includes('צור') || message.includes('הוסף') ||
+                    message.includes('מחק') || message.includes('הצג')) {
+                    console.log('🔄 בקשה חדשה זוהתה - מנקה זיכרון אישורים ישנים');
+                    pendingActions.delete(sender);
+                    // המשך לעיבוד הרגיל של ההודעה
+                } else {
+                    return res.json({
+                        success: true,
+                        response: 'לא הבנתי את התגובה. אנא כתוב "כן" לאישור או "לא" לביטול.',
+                        needsClarification: true
+                    });
+                }
             }
-            
-            // אם לא ברור - נשאל שוב
-            return res.json({
-                success: true,
-                response: 'לא הבנתי את התגובה. אנא כתוב "כן" לאישור או "לא" לביטול.',
-                needsClarification: true
-            });
         }
 
         const conversationHistory = getConversationHistory(sender);
@@ -640,7 +581,7 @@ app.post('/claude-query', async(req, res) => {
             );
 
             if (needsConfirmation) {
-                // יצירת הודעת אישור פשוטה וברורה
+                // יצירת הודעת אישור פשוטה עם חץ למטה
                 let actionDescription = '🔔 בקשת אישור:\n\n';
                 
                 for (const tool of toolUses) {
@@ -692,15 +633,15 @@ app.post('/claude-query', async(req, res) => {
                         
                         const fields = tool.input.fields;
                         Object.keys(fields).forEach(fieldName => {
-                            const newValue = fields[fieldName]; // מה שרוצים לעדכן אליו
-                            const currentValue = currentValues[fieldName] || '(לא ידוע)'; // מה שיש עכשיו
+                            const newValue = fields[fieldName];
+                            const currentValue = currentValues[fieldName] || '(לא ידוע)';
                             // תצוגה: מה שיש עכשיו ⬇️ מה שרוצים לעדכן אליו
                             actionDescription += `📝 ${fieldName}:\n   ${currentValue}\n   ⬇️\n   ${newValue}\n\n`;
                         });
                     }
                 }
                 
-                actionDescription += '\n❓ האם לבצע את הפעולה? (כן/לא)';
+                actionDescription += '❓ האם לבצע את הפעולה? (כן/לא)';
                 
                 // שמור את הפעולה בזיכרון
                 pendingActions.set(sender, {
@@ -780,15 +721,12 @@ app.post('/claude-query', async(req, res) => {
             }
         }
 
-        // וודא שיש תגובה סופית תקינה
+        // וודא שיש תגובה סופית
         if (!finalResponse || finalResponse.trim() === '') {
             finalResponse = toolsExecuted.length > 0 ?
                 'הפעולה בוצעה בהצלחה.' :
                 'לא הבנתי את הבקשה. אנא נסח מחדש.';
         }
-
-        // ניקוי תוכן שעלול לגרום לבעיות JSON
-        finalResponse = finalResponse.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
 
         addToConversationHistory(sender, 'assistant', finalResponse);
 
@@ -796,25 +734,18 @@ app.post('/claude-query', async(req, res) => {
         console.log('🛠️ כלים שהופעלו:', toolsExecuted);
         console.log('📊 סה"כ שלבים:', stepCount);
 
-        // וודא שהתגובה תקינה ל-JSON
-        const responseData = {
+        res.json({
             success: true,
-            response: String(finalResponse),
-            toolsExecuted: toolsExecuted || [],
-            steps: stepCount || 0
-        };
-
-        return res.json(responseData);
+            response: finalResponse,
+            toolsExecuted: toolsExecuted,
+            steps: stepCount
+        });
 
     } catch (error) {
         console.error('❌ שגיאה כללית:', error);
-        
-        // וודא שהשגיאה תקינה ל-JSON
-        const errorMessage = error && error.message ? String(error.message) : 'שגיאה לא ידועה';
-        
-        res.status(500).json({
+        res.json({
             success: false,
-            error: errorMessage
+            error: error.message
         });
     }
 });
