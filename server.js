@@ -171,6 +171,84 @@ async function detectConfirmation(message) {
     }
 }
 
+// פונקציה משופרת ליצירת הודעת אישור מפורטת
+function createDetailedConfirmationMessage(toolUses, originalMessage) {
+    let actionDescription = `🔍 בקשה: "${originalMessage}"\n\n`;
+    actionDescription += 'אני מתכנן לבצע:\n';
+    
+    toolUses.forEach(tool => {
+        if (tool.name === 'create_record') {
+            const tableId = tool.input.tableId;
+            const fields = tool.input.fields;
+            
+            // זיהוי טבלה
+            let tableName = 'רשומה';
+            if (tableId === 'tblSgYN8CbQcxeT0j') tableName = 'עסקה';
+            else if (tableId === 'tblcTFGg6WyKkO5kq') tableName = 'לקוח';
+            else if (tableId === 'tbl9p6XdUrecy2h7G') tableName = 'פרויקט';
+            else if (tableId === 'tbl3ZCmqfit2L0iQ0') tableName = 'ליד';
+            else if (tableId === 'tbl7etO9Yn3VH9QpT') tableName = 'משרד';
+            else if (tableId === 'tblNJzcMRtyMdH14d') tableName = 'פרח';
+            
+            actionDescription += `• ➕ יצירת ${tableName} חדשה\n`;
+            
+            // הוסף פרטים על השדות החשובים
+            if (fields['שם מלא']) actionDescription += `  - שם: ${fields['שם מלא']}\n`;
+            if (fields['שם העסקה']) actionDescription += `  - עסקה: ${fields['שם העסקה']}\n`;
+            if (fields['שם הפרויקט']) actionDescription += `  - פרויקט: ${fields['שם הפרויקט']}\n`;
+            
+        } else if (tool.name === 'update_record') {
+            const tableId = tool.input.tableId;
+            const fields = tool.input.fields;
+            const recordId = tool.input.recordId;
+            
+            // זיהוי טבלה
+            let tableName = 'רשומה';
+            if (tableId === 'tblSgYN8CbQcxeT0j') tableName = 'עסקה';
+            else if (tableId === 'tblcTFGg6WyKkO5kq') tableName = 'לקוח';
+            else if (tableId === 'tbl9p6XdUrecy2h7G') tableName = 'פרויקט';
+            else if (tableId === 'tbl3ZCmqfit2L0iQ0') tableName = 'ליד';
+            else if (tableId === 'tbl7etO9Yn3VH9QpT') tableName = 'משרד';
+            else if (tableId === 'tblNJzcMRtyMdH14d') tableName = 'פרח';
+            
+            actionDescription += `• 🔄 עדכון ${tableName} (ID: ${recordId.substring(0, 8)}...)\n`;
+            
+            // הוסף פרטים על מה משתנה
+            Object.keys(fields).forEach(fieldName => {
+                const value = fields[fieldName];
+                
+                // הצג עדכונים חשובים
+                if (fieldName.includes('סטטוס') || fieldName.includes('Status')) {
+                    actionDescription += `  - עדכון ${fieldName} ל: ${value}\n`;
+                } else if (fieldName.includes('גודל') || fieldName.includes('Size')) {
+                    actionDescription += `  - עדכון ${fieldName} ל: ${value}\n`;
+                } else if (fieldName.includes('טלפון') || fieldName.includes('Phone')) {
+                    actionDescription += `  - עדכון ${fieldName} ל: ${value}\n`;
+                } else if (fieldName.includes('אימייל') || fieldName.includes('Email')) {
+                    actionDescription += `  - עדכון ${fieldName} ל: ${value}\n`;
+                } else if (fieldName.includes('מחיר') || fieldName.includes('Price')) {
+                    actionDescription += `  - עדכון ${fieldName} ל: ${value}\n`;
+                } else if (fieldName.includes('כתובת') || fieldName.includes('Address')) {
+                    actionDescription += `  - עדכון ${fieldName} ל: ${value}\n`;
+                } else if (fieldName.includes('הערות') || fieldName.includes('Notes')) {
+                    const shortValue = typeof value === 'string' && value.length > 30 ? value.substring(0, 30) + '...' : value;
+                    actionDescription += `  - עדכון ${fieldName} ל: ${shortValue}\n`;
+                } else if (typeof value === 'string' && value.length < 100) {
+                    actionDescription += `  - עדכון ${fieldName} ל: ${value}\n`;
+                } else {
+                    actionDescription += `  - עדכון ${fieldName}\n`;
+                }
+            });
+            
+        } else if (tool.name === 'delete_records') {
+            actionDescription += `• 🗑️ מחיקת רשומה\n`;
+        }
+    });
+    
+    actionDescription += '\n❓ האם אתה רוצה שאמשיך? (כן/לא)';
+    return actionDescription;
+}
+
 // פונקציה לביצוע פעולה מאושרת
 async function executePendingAction(pendingAction) {
     try {
@@ -207,7 +285,8 @@ async function executePendingAction(pendingAction) {
         }
         
         // הוסף תוצאות לשיחה וקבל תגובה סופית מClaude
-        messages.push({
+        const updatedMessages = [...messages];
+        updatedMessages.push({
             role: 'user',
             content: toolResults
         });
@@ -216,7 +295,7 @@ async function executePendingAction(pendingAction) {
             model: "claude-3-5-sonnet-20241022",
             max_tokens: 3000,
             system: systemPrompt,
-            messages: messages,
+            messages: updatedMessages,
             tools: []
         });
         
@@ -295,13 +374,15 @@ async function searchAirtable(baseId, tableId, searchTerm) {
             JSON.stringify(record.fields).toLowerCase().includes(searchTerm.toLowerCase())
         );
 
-        console.log('✅ נמצאו', filteredRecords.length, 'רשומות');
+        console.log('✅ נמצאו', filteredRecords.length, 'רשומות בטבלה', tableId);
 
         // החזר מידע מפורט יותר כדי שClaude יוכל לבצע פעולות
         return {
             found: filteredRecords.length,
+            tableId: tableId, // חשוב! שמור את ה-tableId כדי שהעדכון יהיה באותה טבלה
             records: filteredRecords.map(record => ({
                 id: record.id,
+                tableId: tableId, // הוסף גם כאן
                 fields: record.fields
             }))
         };
@@ -359,9 +440,27 @@ async function createRecord(baseId, tableId, fields) {
 
 async function updateRecord(baseId, tableId, recordId, fields) {
     try {
-        console.log('🔄 מעדכן רשומה:', recordId);
+        console.log('🔄 מעדכן רשומה:', recordId, 'בטבלה:', tableId);
         console.log('📝 שדות חדשים:', JSON.stringify(fields, null, 2));
 
+        // ראשית - בדוק שהרשומה קיימת בטבלה
+        const checkUrl = 'https://api.airtable.com/v0/' + baseId + '/' + tableId + '/' + recordId;
+        try {
+            const checkResponse = await axios.get(checkUrl, {
+                headers: {
+                    'Authorization': 'Bearer ' + config.AIRTABLE_API_KEY
+                }
+            });
+            console.log('✅ רשומה נמצאה בטבלה:', tableId);
+        } catch (checkError) {
+            if (checkError.response && checkError.response.status === 404) {
+                console.error('❌ רשומה לא נמצאה:', recordId, 'בטבלה:', tableId);
+                throw new Error(`Record ID ${recordId} does not exist in table ${tableId}. Please search for the record first in the correct table.`);
+            }
+            throw checkError;
+        }
+
+        // אם הרשומה קיימת - בצע עדכון
         const url = 'https://api.airtable.com/v0/' + baseId + '/' + tableId;
         const response = await axios.patch(url, {
             records: [{
@@ -375,7 +474,7 @@ async function updateRecord(baseId, tableId, recordId, fields) {
             }
         });
 
-        console.log('✅ רשומה עודכנה בהצלחה');
+        console.log('✅ רשומה עודכנה בהצלחה בטבלה:', tableId);
         return response.data.records[0];
     } catch (error) {
         console.error('❌ שגיאה בעדכון:', error.response ? error.response.data : error.message);
@@ -583,15 +682,23 @@ async function handleToolUse(toolUse) {
     }
 }
 
-// SystemPrompt חדש ומפושט
+// SystemPrompt כללי ומשופר
 const systemPrompt = 'אתה עוזר חכם שמחובר לאיירטיבל.\n\n' +
-    '🚨 חוקים קריטיים:\n' +
+    '🚨 חוקים קריטיים לעבודה עם רשומות:\n' +
     '1. כאשר מוצאים רשומה - מיד בצע את הפעולה הנדרשת!\n' +
     '2. אל תחזור ותחפש את אותה רשומה פעמיים!\n' +
     '3. אל תאמר "עכשיו אעדכן" - פשוט עדכן!\n' +
     '4. כל עדכון חייב להיעשות עם הכלי update_record!\n' +
     '5. השתמש במזהה הרשומה (ID) שקיבלת מהחיפוש!\n' +
-    '6. אחרי כל פעולה - הודע בבירור מה קרה!\n\n' +
+    '6. אחרי כל פעולה - הודע בבירור מה קרה!\n' +
+    '7. 🔴 חשוב ביותר: תמיד עדכן רשומה באותה טבלה שבה מצאת אותה!\n' +
+    '8. 🔴 זכור את ה-tableId מתוצאת החיפוש והשתמש בו לעדכון!\n' +
+    '9. 🔴 אם חיפשת בטבלה X - עדכן בטבלה X (אותו tableId)!\n\n' +
+    '📝 תהליך נכון לעדכון כל רשומה:\n' +
+    '• קבע איזה סוג רשומה זה (לקוח/עסקה/פרויקט/ליד/משרד)\n' +
+    '• חפש בטבלה המתאימה לסוג הרשומה\n' +
+    '• קבל record ID + tableId מתוצאת החיפוש\n' +
+    '• עדכן באותו tableId שבו חיפשת!\n\n' +
     '🎯 תרחיש מיוחד - לקוח השלים הרשמה / העביר דמי רצינות:\n' +
     'כשאומרים לך "לקוח השלים הרשמה" או "העביר דמי רצינות":\n' +
     '1. מצא את הלקוח בטבלת הלקוחות (search_airtable)\n' +
@@ -728,13 +835,22 @@ const systemPrompt = 'אתה עוזר חכם שמחובר לאיירטיבל.\n\
     '- מזהה לקוח (ID_Client): ["rec0GDfLEzXXCUX9X"] (שי טוקטלי)\n' +
     '- סטטוס עסקה: "בתהליך" (לא "התקדם" או כל דבר אחר)\n' +
     '- סטטוס לקוח בעסקה: "לא מתקדם" (לא "לא התקדם")\n\n' +
-    '⚡ דוגמה נכונה:\n' +
-    'בקשה: "דונלד טראמפ העביר דמי רצינות לפארק רעננה"\n' +
-    '1. search_airtable עבור דונלד -> מקבל customer ID\n' +
-    '2. search_airtable עבור פארק רעננה -> מקבל project ID\n' +
-    '3. search_transactions עבור customer ID + project ID\n' +
-    '4. אם יש עסקה -> "✅ כבר קיימת עסקה עבור דונלד טראמפ ופארק רעננה"\n' +
-    '5. אם אין עסקה -> create_record בטבלת עסקאות\n\n' +
+    '⚡ דוגמאות נכונות לעדכונים:\n\n' +
+    '🔹 עדכון לקוח:\n' +
+    'בקשה: "תשנה לאוראל מזרחי את הטלפון ל 050-1234567"\n' +
+    '1. search_airtable ב-tblcTFGg6WyKkO5kq עבור "אוראל מזרחי"\n' +
+    '2. קבל record ID + tableId (tblcTFGg6WyKkO5kq)\n' +
+    '3. update_record ב-tblcTFGg6WyKkO5kq עם השדה "טלפון": "050-1234567"\n\n' +
+    '🔹 עדכון עסקה:\n' +
+    'בקשה: "תעדכן את סטטוס העסקה של דני כהן לנחתמה"\n' +
+    '1. search_airtable ב-tblSgYN8CbQcxeT0j עבור "דני כהן"\n' +
+    '2. קבל record ID + tableId (tblSgYN8CbQcxeT0j)\n' +
+    '3. update_record ב-tblSgYN8CbQcxeT0j עם השדה "סטטוס עסקה": "נחתמה"\n\n' +
+    '🔹 עדכון פרויקט:\n' +
+    'בקשה: "תשנה את מנהל המכירות של פרויקט X"\n' +
+    '1. search_airtable ב-tbl9p6XdUrecy2h7G עבור שם הפרויקט\n' +
+    '2. קבל record ID + tableId (tbl9p6XdUrecy2h7G)\n' +
+    '3. update_record ב-tbl9p6XdUrecy2h7G עם השדה המתאים\n\n' +
     '🇮🇱 ענה רק בעברית';
 
 // endpoint חדש לשליחת הודעות מיידיות מ-n8n
@@ -867,25 +983,15 @@ app.post('/claude-query', async(req, res) => {
             );
 
             if (needsConfirmation) {
-                // הכן תיאור הפעולה לאישור
-                let actionDescription = 'אני מתכנן לבצע:\n';
-                toolUses.forEach(tool => {
-                    if (tool.name === 'create_record') {
-                        actionDescription += `• ➕ יצירת רשומה חדשה\n`;
-                    } else if (tool.name === 'update_record') {
-                        actionDescription += `• 🔄 עדכון רשומה קיימת\n`;
-                    } else if (tool.name === 'delete_records') {
-                        actionDescription += `• 🗑️ מחיקת רשומה\n`;
-                    }
-                });
-                
-                actionDescription += '\n❓ האם אתה רוצה שאמשיך? (כן/לא)';
+                // יצירת הודעת אישור מפורטת
+                const actionDescription = createDetailedConfirmationMessage(toolUses, message);
                 
                 // שמור את הפעולה בזיכרון
                 pendingActions.set(sender, {
                     toolUses: toolUses,
                     messages: messages,
-                    stepCount: stepCount
+                    stepCount: stepCount,
+                    originalMessage: message
                 });
                 
                 return res.json({
@@ -921,7 +1027,7 @@ app.post('/claude-query', async(req, res) => {
                     } else if (errorMessage.includes('status code 422')) {
                         errorMessage = 'שגיאה: נתונים לא תקינים או שדה לא קיים.';
                     } else if (errorMessage.includes('does not exist in this table')) {
-                        errorMessage = 'שגיאה: הרשומה לא קיימת בטבלה.';
+                        errorMessage = 'שגיאה: הרשומה לא קיימת בטבלה הזו. אנא חפש את הרשומה תחילה בטבלה הנכונה.';
                     }
 
                     toolResults.push({
@@ -1033,6 +1139,7 @@ app.listen(3000, '0.0.0.0', () => {
     console.log('🧪 Test: GET /test-airtable');
     console.log('🧠 Memory: POST /clear-memory, GET /memory');
     console.log('📱 New: POST /send-immediate-response - for immediate responses');
-    console.log('🔐 New: Confirmation system for sensitive operations');
-    console.log('⚡ VERSION 2024: Enhanced with immediate responses and confirmation system');
+    console.log('🔐 New: Enhanced confirmation system with detailed descriptions');
+    console.log('🛡️ New: Record validation to prevent table mismatch errors');
+    console.log('⚡ VERSION 2024: Universal solution for all record operations');
 });
