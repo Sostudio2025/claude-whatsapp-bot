@@ -835,11 +835,34 @@ app.post('/claude-query', async(req, res) => {
                     actionCancelled: true
                 });
             } else if (confirmationType === 'unclear') {
-                return res.json({
-                    success: true,
-                    response: 'לא הבנתי את התגובה. אנא כתב "כן" לאישור או "לא" לביטול.',
-                    needsClarification: true
-                });
+                // אם זה מילת תודה או הודעה לא רלוונטיה - נקה את הזיכרון
+                if (message.toLowerCase().includes('תודה') || 
+                    message.toLowerCase().includes('thanks') || 
+                    message.toLowerCase().includes('תנקס') ||
+                    message.toLowerCase().includes('יפה') ||
+                    message.toLowerCase().includes('מעולה')) {
+                    pendingActions.delete(sender);
+                    return res.json({
+                        success: true,
+                        response: 'בשמחה! 😊 איך אני יכול לעזור לך עוד?',
+                        actionCompleted: true
+                    });
+                }
+                
+                // אם זה נראה כמו בקשה חדשה (ולא תגובה לאישור) - נקה את הזיכרון ועבד על הבקשה החדשה
+                if (message.includes('עדכן') || message.includes('שנה') || message.includes('תמצא') || 
+                    message.includes('חפש') || message.includes('צור') || message.includes('הוסף') ||
+                    message.includes('מחק') || message.includes('הצג')) {
+                    console.log('🔄 בקשה חדשה זוהתה - מנקה זיכרון אישורים ישנים');
+                    pendingActions.delete(sender);
+                    // המשך לעיבוד הרגיל של ההודעה (לא return כאן)
+                } else {
+                    return res.json({
+                        success: true,
+                        response: 'לא הבנתי את התגובה. אנא כתב "כן" לאישור או "לא" לביטול.',
+                        needsClarification: true
+                    });
+                }
             }
         }
 
