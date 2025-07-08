@@ -585,17 +585,37 @@ app.post('/claude-query', async(req, res) => {
                 
                 // בצע את הפעולה המאושרת
                 try {
+                    let successCount = 0;
+                    let errorMessages = [];
+                    
                     for (const toolUse of pendingAction.toolUses) {
-                        await handleToolUse(toolUse);
-                        console.log('✅ כלי מאושר הושלם:', toolUse.name);
+                        try {
+                            console.log('🛠️ מפעיל כלי מאושר:', toolUse.name, 'עם פרמטרים:', JSON.stringify(toolUse.input, null, 2));
+                            const result = await handleToolUse(toolUse);
+                            console.log('✅ כלי מאושר הושלם:', toolUse.name, 'תוצאה:', JSON.stringify(result, null, 2));
+                            successCount++;
+                        } catch (toolError) {
+                            console.error('❌ שגיאה בכלי מאושר:', toolUse.name, toolError.message);
+                            errorMessages.push(`${toolUse.name}: ${toolError.message}`);
+                        }
                     }
                     
-                    return res.json({
-                        success: true,
-                        response: '✅ הפעולה בוצעה בהצלחה!',
-                        actionCompleted: true
-                    });
+                    if (successCount > 0 && errorMessages.length === 0) {
+                        return res.json({
+                            success: true,
+                            response: '✅ הפעולה בוצעה בהצלחה!',
+                            actionCompleted: true
+                        });
+                    } else if (errorMessages.length > 0) {
+                        return res.json({
+                            success: false,
+                            response: '❌ שגיאה בביצוע הפעולה:\n' + errorMessages.join('\n'),
+                            actionFailed: true
+                        });
+                    }
+                    
                 } catch (error) {
+                    console.error('❌ שגיאה כללית בביצוע פעולה מאושרת:', error);
                     return res.json({
                         success: false,
                         response: '❌ אירעה שגיאה בביצוע הפעולה: ' + error.message
@@ -683,7 +703,7 @@ app.post('/claude-query', async(req, res) => {
             );
 
             if (needsConfirmation) {
-                // יצירת הודעת אישור מפורטת עם נתונים קיימים
+                // יצירת הודעת אישור פשוטה וברורה
                 let actionDescription = '🔔 בקשת אישור:\n\n';
                 
                 for (const tool of toolUses) {
@@ -702,13 +722,11 @@ app.post('/claude-query', async(req, res) => {
                         if (fields['שם הפרויקט']) actionDescription += `🏗️ פרויקט: ${fields['שם הפרויקט']}\n`;
                         
                     } else if (tool.name === 'update_record') {
-                        actionDescription += `🔄 עדכון רשומה\n`;
-                        
-                        // מצא את פרטי הרשומה מההיסטוריה
-                        let customerName = '';
+                        // מצא את שם הלקוח והערכים הנוכחיים מההיסטוריה
+                        let customerName = 'רשומה';
                         let currentValues = {};
                         
-                        // חפש בהיסטוריית ההודעות את תוצאות החיפוש האחרונות
+                        // חפש בהיסטוריית ההודעות
                         for (let i = messages.length - 1; i >= 0; i--) {
                             const msg = messages[i];
                             if (msg.role === 'user' && Array.isArray(msg.content)) {
@@ -719,28 +737,26 @@ app.post('/claude-query', async(req, res) => {
                                             if (result.records && Array.isArray(result.records)) {
                                                 const record = result.records.find(r => r.id === tool.input.recordId);
                                                 if (record && record.fields) {
-                                                    customerName = record.fields['שם מלא'] || record.fields['שם העסקה'] || record.fields['שם הפרויקט'] || '';
+                                                    customerName = record.fields['שם מלא'] || customerName;
                                                     currentValues = record.fields;
                                                     break;
                                                 }
                                             }
                                         } catch (e) {
-                                            // התעלם משגיאות parsing
+                                            // התעלם משגיאות
                                         }
                                     }
                                 }
-                                if (customerName) break;
+                                if (customerName !== 'רשומה') break;
                             }
                         }
                         
-                        if (customerName) {
-                            actionDescription += `👤 לקוח: ${customerName}\n`;
-                        }
+                        actionDescription += `🔄 עדכון עבור: ${customerName}\n`;
                         
                         const fields = tool.input.fields;
                         Object.keys(fields).forEach(fieldName => {
                             const newValue = fields[fieldName];
-                            const currentValue = currentValues[fieldName] || '(ריק)';
+                            const currentValue = currentValues[fieldName] || '(לא ידוע)';
                             actionDescription += `📝 ${fieldName}: ${currentValue} ➡️ ${newValue}\n`;
                         });
                     }
