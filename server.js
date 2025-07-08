@@ -483,21 +483,35 @@ app.post('/claude-query', async(req, res) => {
 
         console.log('📨 הודעה מ-' + sender + ':', message);
 
+        // ולידציה בסיסית של הנתונים
+        if (!message || typeof message !== 'string') {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid message format'
+            });
+        }
+
         // 🧹 נקה זיכרון אם זו בקשה חדשה (לא אישור)
-        if (!message.toLowerCase().includes('כן') && 
-            !message.toLowerCase().includes('לא') && 
-            !message.toLowerCase().includes('אישור') &&
-            !message.toLowerCase().includes('ביטול')) {
-            
+        const isConfirmation = message.toLowerCase().includes('כן') || 
+                              message.toLowerCase().includes('לא') || 
+                              message.toLowerCase().includes('אישור') ||
+                              message.toLowerCase().includes('ביטול') ||
+                              message.toLowerCase().includes('אוקיי') ||
+                              message.toLowerCase().includes('בצע') ||
+                              message.toLowerCase().includes('עצור');
+
+        if (!isConfirmation) {
             // זו בקשה חדשה - נקה זיכרון אישורים ישנים
             if (pendingActions.has(sender)) {
-                console.log('🧹 מנקה זיכרון אישורים ישנים עבור בקשה חדשה');
+                console.log('🧹 מנקה זיכרון אישורים ישנים עבור בקשה חדשה:', message);
                 pendingActions.delete(sender);
             }
         }
 
         // בדיקה אם זה אישור לפעולה מחכה
-        if (pendingActions.has(sender)) {
+        if (pendingActions.has(sender) && isConfirmation) {
+        // בדיקה אם זה אישור לפעולה מחכה
+        if (pendingActions.has(sender) && isConfirmation) {
             const pendingAction = pendingActions.get(sender);
             
             if (message.toLowerCase().includes('כן') || message.toLowerCase().includes('אישור') || 
@@ -766,12 +780,15 @@ app.post('/claude-query', async(req, res) => {
             }
         }
 
-        // וודא שיש תגובה סופית
+        // וודא שיש תגובה סופית תקינה
         if (!finalResponse || finalResponse.trim() === '') {
             finalResponse = toolsExecuted.length > 0 ?
                 'הפעולה בוצעה בהצלחה.' :
                 'לא הבנתי את הבקשה. אנא נסח מחדש.';
         }
+
+        // ניקוי תוכן שעלול לגרום לבעיות JSON
+        finalResponse = finalResponse.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
 
         addToConversationHistory(sender, 'assistant', finalResponse);
 
@@ -779,18 +796,25 @@ app.post('/claude-query', async(req, res) => {
         console.log('🛠️ כלים שהופעלו:', toolsExecuted);
         console.log('📊 סה"כ שלבים:', stepCount);
 
-        res.json({
+        // וודא שהתגובה תקינה ל-JSON
+        const response = {
             success: true,
-            response: finalResponse,
-            toolsExecuted: toolsExecuted,
-            steps: stepCount
-        });
+            response: String(finalResponse),
+            toolsExecuted: toolsExecuted || [],
+            steps: stepCount || 0
+        };
+
+        res.json(response);
 
     } catch (error) {
         console.error('❌ שגיאה כללית:', error);
-        res.json({
+        
+        // וודא שהשגיאה תקינה ל-JSON
+        const errorMessage = error && error.message ? String(error.message) : 'שגיאה לא ידועה';
+        
+        res.status(500).json({
             success: false,
-            error: error.message
+            error: errorMessage
         });
     }
 });
