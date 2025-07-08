@@ -417,8 +417,9 @@ const systemPrompt = 'אתה עוזר חכם שמחובר לאיירטיבל.\n\
     '2. אל תחזור ותחפש את אותה רשומה פעמיים!\n' +
     '3. אל תאמר "עכשיו אעדכן" - פשוט עדכן!\n' +
     '4. כל עדכון חייב להיעשות עם הכלי update_record!\n' +
-    '5. השתמש במזהה הרשומה (ID) שקיבלת מהחיפוש!\n' +
-    '6. אחרי כל פעולה - הודע בבירור מה קרה!\n\n' +
+    '5. השתמש במזהה הרשומה המלא (ID) שקיבלת מהחיפוש - לא מספרים קצרים!\n' +
+    '6. מזהה רשומה תקין נראה כך: "recABCD1234567890" - לא "rec16"!\n' +
+    '7. אחרי כל פעולה - הודע בבירור מה קרה!\n\n' +
     '🎯 תרחיש מיוחד - לקוח השלים הרשמה / העביר דמי רצינות:\n' +
     'כשאומרים לך "לקוח השלים הרשמה" או "העביר דמי רצינות":\n' +
     '1. מצא את הלקוח בטבלת הלקוחות (search_airtable)\n' +
@@ -557,8 +558,8 @@ const systemPrompt = 'אתה עוזר חכם שמחובר לאיירטיבל.\n\
     '- סטטוס לקוח בעסקה: "לא מתקדם" (לא "לא התקדם")\n\n' +
     '⚡ דוגמה נכונה:\n' +
     'בקשה: "דונלד טראמפ העביר דמי רצינות לפארק רעננה"\n' +
-    '1. search_airtable עבור דונלד -> מקבל customer ID\n' +
-    '2. search_airtable עבור פארק רעננה -> מקבל project ID\n' +
+    '1. search_airtable עבור דונלד -> מקבל customer ID מלא כמו "recABC123..."\n' +
+    '2. search_airtable עבור פארק רעננה -> מקבל project ID מלא\n' +
     '3. search_transactions עבור customer ID + project ID\n' +
     '4. אם יש עסקה -> "✅ כבר קיימת עסקה עבור דונלד טראמפ ופארק רעננה"\n' +
     '5. אם אין עסקה -> create_record בטבלת עסקאות\n\n' +
@@ -682,7 +683,7 @@ app.post('/claude-query', async(req, res) => {
             );
 
             if (needsConfirmation) {
-                // יצירת הודעת אישור פשוטה
+                // יצירת הודעת אישור מפורטת עם נתונים קיימים
                 let actionDescription = '🔔 בקשת אישור:\n\n';
                 
                 for (const tool of toolUses) {
@@ -703,11 +704,45 @@ app.post('/claude-query', async(req, res) => {
                     } else if (tool.name === 'update_record') {
                         actionDescription += `🔄 עדכון רשומה\n`;
                         
-                        const fields = tool.input.fields;
-                        const fieldNames = Object.keys(fields);
-                        if (fieldNames.length > 0) {
-                            actionDescription += `📝 שדות: ${fieldNames.join(', ')}\n`;
+                        // מצא את פרטי הרשומה מההיסטוריה
+                        let customerName = '';
+                        let currentValues = {};
+                        
+                        // חפש בהיסטוריית ההודעות את תוצאות החיפוש האחרונות
+                        for (let i = messages.length - 1; i >= 0; i--) {
+                            const msg = messages[i];
+                            if (msg.role === 'user' && Array.isArray(msg.content)) {
+                                for (const content of msg.content) {
+                                    if (content.type === 'tool_result') {
+                                        try {
+                                            const result = JSON.parse(content.content);
+                                            if (result.records && Array.isArray(result.records)) {
+                                                const record = result.records.find(r => r.id === tool.input.recordId);
+                                                if (record && record.fields) {
+                                                    customerName = record.fields['שם מלא'] || record.fields['שם העסקה'] || record.fields['שם הפרויקט'] || '';
+                                                    currentValues = record.fields;
+                                                    break;
+                                                }
+                                            }
+                                        } catch (e) {
+                                            // התעלם משגיאות parsing
+                                        }
+                                    }
+                                }
+                                if (customerName) break;
+                            }
                         }
+                        
+                        if (customerName) {
+                            actionDescription += `👤 לקוח: ${customerName}\n`;
+                        }
+                        
+                        const fields = tool.input.fields;
+                        Object.keys(fields).forEach(fieldName => {
+                            const newValue = fields[fieldName];
+                            const currentValue = currentValues[fieldName] || '(ריק)';
+                            actionDescription += `📝 ${fieldName}: ${currentValue} ➡️ ${newValue}\n`;
+                        });
                     }
                 }
                 
