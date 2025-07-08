@@ -5,6 +5,15 @@ const fs = require('fs');
 const path = require('path');
 
 function loadConfig() {
+    // בשרת נשתמש במשתני סביבה
+    if (process.env.NODE_ENV === 'production' || !fs.existsSync(path.join(__dirname, 'env_config.txt'))) {
+        return {
+            CLAUDE_API_KEY: process.env.CLAUDE_API_KEY,
+            AIRTABLE_API_KEY: process.env.AIRTABLE_API_KEY
+        };
+    }
+    
+    // בפיתוח נשתמש בקובץ (רק אם הוא קיים)
     const configPath = path.join(__dirname, 'env_config.txt');
     const configData = fs.readFileSync(configPath, 'utf8');
 
