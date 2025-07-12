@@ -703,8 +703,8 @@ app.post('/claude-query', async(req, res) => {
                 // שמור את הפעולה בזיכרון
                 pendingActions.set(sender, {
                     toolUses: toolUses,
-                    originalMessage: message
- timestamp: Date.now()  // ← הוסף את השורה הזו
+                    originalMessage: message,
+ timestamp: Date.now()  
                 });
                 
                 return res.json({
