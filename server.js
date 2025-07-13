@@ -498,84 +498,61 @@ app.post('/claude-query', async(req, res) => {
 
         console.log('📨 הודעה מ-' + sender + ':', message);
 
-        // פונקציות עזר לזיהוי סוג ההודעה
-        function isNewQuestion(message) {
-            const newQuestionKeywords = [
-                'חפש', 'מצא', 'הצג', 'תראה', 'איפה', 'מה', 'איך', 'מי',
-                'עדכן', 'שנה', 'צור', 'הוסף', 'מחק', 'רשום', 'העבר',
-                'כמה', 'אילו', 'איזה', 'תן לי', 'בדוק', 'ספר לי', 'תמצא'
-            ];
-            
-            return newQuestionKeywords.some(keyword => 
-                message.includes(keyword)
-            );
-        }
-
-        function isConfirmationResponse(message) {
-            const confirmKeywords = ['כן', 'אישור', 'אוקיי', 'בצע', 'נכון', 'טוב'];
-            const denyKeywords = ['לא', 'ביטול', 'עצור', 'רגע', 'חכה'];
-            
-            return confirmKeywords.some(keyword => message.includes(keyword)) ||
-                   denyKeywords.some(keyword => message.includes(keyword));
-        }
-
-        // בדיקה אם יש אישור מחכה
+        // בדיקה אם זה אישור לפעולה מחכה
         if (pendingActions.has(sender)) {
-            // אם זו שאלה חדשה ברורה - נקה את האישור הישן
-            if (isNewQuestion(message) && !isConfirmationResponse(message)) {
-                console.log('🔄 זוהתה שאלה חדשה - מנקה אישור ישן');
+            if (message.toLowerCase().includes('כן') || message.toLowerCase().includes('אישור') || 
+                message.toLowerCase().includes('אוקיי') || message.toLowerCase().includes('בצע')) {
+                
+                const pendingAction = pendingActions.get(sender);
+                console.log('✅ מבצע פעולה מאושרת עבור:', sender);
                 pendingActions.delete(sender);
-                // המשך לעיבוד השאלה החדשה למטה
-            } 
-            // אם זו תגובת אישור ברורה
-            else if (isConfirmationResponse(message)) {
-                if (message.toLowerCase().includes('כן') || message.toLowerCase().includes('אישור') || 
-                    message.toLowerCase().includes('אוקיי') || message.toLowerCase().includes('בצע')) {
-                    
-                    const pendingAction = pendingActions.get(sender);
-                    console.log('✅ מבצע פעולה מאושרת עבור:', sender);
-                    pendingActions.delete(sender);
-                    
-                    // בצע את הפעולה המאושרת
-                    try {
-                        for (const toolUse of pendingAction.toolUses) {
-                            await handleToolUse(toolUse);
-                            console.log('✅ כלי מאושר הושלם:', toolUse.name);
-                        }
-                        
-                        return res.json({
-                            success: true,
-                            response: '✅ הפעולה בוצעה בהצלחה!',
-                            actionCompleted: true
-                        });
-                    } catch (error) {
-                        return res.json({
-                            success: false,
-                            response: '❌ אירעה שגיאה בביצוע הפעולה: ' + error.message
-                        });
+                
+                // בצע את הפעולה המאושרת
+                try {
+                    for (const toolUse of pendingAction.toolUses) {
+                        await handleToolUse(toolUse);
+                        console.log('✅ כלי מאושר הושלם:', toolUse.name);
                     }
                     
-                } else if (message.toLowerCase().includes('לא') || message.toLowerCase().includes('ביטול') || 
-                           message.toLowerCase().includes('עצור')) {
-                    
-                    pendingActions.delete(sender);
                     return res.json({
                         success: true,
-                        response: '❌ הפעולה בוטלה לפי בקשתך',
-                        actionCancelled: true
+                        response: '✅ הפעולה בוצעה בהצלחה!',
+                        actionCompleted: true
+                    });
+                } catch (error) {
+                    return res.json({
+                        success: false,
+                        response: '❌ אירעה שגיאה בביצוע הפעולה: ' + error.message
+                    });
+                }
+                
+            } else if (message.toLowerCase().includes('לא') || message.toLowerCase().includes('ביטול') || 
+                       message.toLowerCase().includes('עצור')) {
+                
+                pendingActions.delete(sender);
+                return res.json({
+                    success: true,
+                    response: '❌ הפעולה בוטלה לפי בקשתך',
+                    actionCancelled: true
+                });
+            } else {
+                // אם זה נראה כמו בקשה חדשה - נקה זיכרון ועבד על הבקשה החדשה
+                if (message.includes('עדכן') || message.includes('שנה') || message.includes('תמצא') || 
+                    message.includes('חפש') || message.includes('צור') || message.includes('הוסף') ||
+                    message.includes('מחק') || message.includes('הצג')) {
+                    console.log('🔄 בקשה חדשה זוהתה - מנקה זיכרון אישורים ישנים');
+                    pendingActions.delete(sender);
+                    // המשך לעיבוד הרגיל של ההודעה
+                } else {
+                    return res.json({
+                        success: true,
+                        response: 'לא הבנתי את התגובה. אנא כתוב "כן" לאישור או "לא" לביטול.',
+                        needsClarification: true
                     });
                 }
             }
-            // אם זו לא שאלה חדשה ולא תגובת אישור ברורה
-            else {
-                return res.json({
-                    success: true,
-                    response: 'יש לי פעולה מחכה לאישור. אנא כתוב "כן" לאישור, "לא" לביטול, או שאל שאלה חדשה.',
-                    needsClarification: true,
-                    pendingAction: true
-                });
-            }
         }
+
         const conversationHistory = getConversationHistory(sender);
         addToConversationHistory(sender, 'user', message);
 
@@ -703,8 +680,7 @@ app.post('/claude-query', async(req, res) => {
                 // שמור את הפעולה בזיכרון
                 pendingActions.set(sender, {
                     toolUses: toolUses,
-                    originalMessage: message,
- timestamp: Date.now()  
+                    originalMessage: message
                 });
                 
                 return res.json({
@@ -851,19 +827,6 @@ app.get('/test-airtable', async(req, res) => {
         });
     }
 });
-
-// ניקוי אישורים ישנים
-setInterval(() => {
-    const maxPendingTime = 10 * 60 * 1000; // 10 דקות
-    const now = Date.now();
-    
-    for (const [sender, action] of pendingActions.entries()) {
-        if (action.timestamp && now - action.timestamp > maxPendingTime) {
-            console.log('🧹 מנקה אישור ישן עבור:', sender);
-            pendingActions.delete(sender);
-        }
-    }
-}, 5 * 60 * 1000); // בדיקה כל 5 דקות
 
 app.listen(3000, '0.0.0.0', () => {
     console.log('🚀 Server running on 0.0.0.0:3000');
