@@ -49,7 +49,7 @@ const MEMORY_CONFIG = {
     // מילות פעולה שמסמנות בקשה חדשה
     ACTION_KEYWORDS: ['צור', 'הוסף', 'עדכן', 'מצא', 'חפש', 'בדוק', 'הצג', 'רשום', 'הכנס', 'שנה', 'מחק', 'בטל'],
     // מילים שמסמנות התייחסות לפעולה קודמת
-    CONTINUATION_KEYWORDS: ['כן', 'אישור', 'אוקיי', 'בצע', 'המשך', 'תמשיך', 'עוד', 'גם', 'בנוסף', 'כמו כן']
+    CONTINUATION_KEYWORDS: ['כן', 'אישור', 'אוקיי', 'אוקי', 'בטח', 'בסדר', 'בצע', 'המשך', 'תמשיך', 'עוד', 'גם', 'בנוסף', 'כמו כן', 'ok', 'yes']
 };
 
 // מבנה משופר לזיכרון השיחות
@@ -781,7 +781,8 @@ app.post('/claude-query', async(req, res) => {
         // בדיקה אם צריך להתחיל שיחה חדשה
         const conversationHistory = getConversationHistory(sender);
         
-        if (shouldStartNewConversation(message, conversationHistory)) {
+        // אם יש פעולה ממתינה לאישור - אל תתחיל שיחה חדשה!
+        if (!pendingActions.has(sender) && shouldStartNewConversation(message, conversationHistory)) {
             console.log('🆕 מתחיל שיחה חדשה');
             const data = getConversationData(sender);
             data.history = [];
