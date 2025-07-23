@@ -150,7 +150,7 @@ function shouldStartNewConversation(message, conversationHistory) {
             }
         }
         
- // הוסף בדיקה בפונקציה hasNewEntity:
+// הוסף בדיקה בפונקציה hasNewEntity:
 function hasNewEntity(message, history) {
     // אם ההודעה האחרונה הייתה שאלה - התשובה קשורה אליה!
     if (history.length > 0) {
@@ -161,6 +161,9 @@ function hasNewEntity(message, history) {
              lastMessage.content.includes('איזה'))) {
             return false; // זו תשובה לשאלה, לא נושא חדש!
         }
+    }
+    
+}
 
 
 // פונקציה לחישוב דמיון בין שתי הודעות
