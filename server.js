@@ -150,14 +150,20 @@ function shouldStartNewConversation(message, conversationHistory) {
             }
         }
         
-        // בדיקה נוספת: אם יש שם או נושא חדש לגמרי
-        if (hasNewEntity(message, conversationHistory)) {
-            console.log('🔄 זוהה נושא או שם חדש');
-            return true;
+ // הוסף בדיקה בפונקציה hasNewEntity:
+function hasNewEntity(message, history) {
+    // אם ההודעה האחרונה הייתה שאלה - התשובה קשורה אליה!
+    if (history.length > 0) {
+        const lastMessage = history[history.length - 1];
+        if (lastMessage.role === 'assistant' && 
+            (lastMessage.content.includes('?') || 
+             lastMessage.content.includes('באיזה') ||
+             lastMessage.content.includes('איזה'))) {
+            return false; // זו תשובה לשאלה, לא נושא חדש!
         }
     }
     
-    return false;
+    // ... המשך הקוד הקיים
 }
 
 // פונקציה לחישוב דמיון בין שתי הודעות
