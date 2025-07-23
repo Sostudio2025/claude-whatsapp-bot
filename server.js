@@ -40,29 +40,152 @@ const anthropic = new Anthropic({
     apiKey: config.CLAUDE_API_KEY
 });
 
-const conversationMemory = new Map();
+// הגדרות לניהול זיכרון
+const MEMORY_CONFIG = {
+    MAX_HISTORY_LENGTH: 10,  // מקסימום הודעות בזיכרון
+    CONTEXT_TIMEOUT_MS: 1000 * 60 * 30,  // 30 דקות - אחרי זה מתחילים שיחה חדשה
+    CLEANUP_KEYWORDS: ['היי', 'שלום', 'בוקר טוב', 'ערב טוב', 'הי', 'מה נשמע', 'מה קורה'],
+    NEW_CONVERSATION_KEYWORDS: ['התחל מחדש', 'שיחה חדשה', 'נקה זיכרון', 'מחק היסטוריה'],
+    // מילות פעולה שמסמנות בקשה חדשה
+    ACTION_KEYWORDS: ['צור', 'הוסף', 'עדכן', 'מצא', 'חפש', 'בדוק', 'הצג', 'רשום', 'הכנס', 'שנה', 'מחק', 'בטל'],
+    // מילים שמסמנות התייחסות לפעולה קודמת
+    CONTINUATION_KEYWORDS: ['כן', 'אישור', 'אוקיי', 'בצע', 'המשך', 'תמשיך', 'עוד', 'גם', 'בנוסף', 'כמו כן']
+};
+
+// מבנה משופר לזיכרון השיחות
+const conversationData = new Map();
+
+function getConversationData(senderId) {
+    if (!conversationData.has(senderId)) {
+        conversationData.set(senderId, {
+            history: [],
+            lastActivity: Date.now(),
+            contextId: Math.random().toString(36).substring(7) // ID ייחודי לשיחה
+        });
+    }
+    return conversationData.get(senderId);
+}
 
 // מערכת אישורים פשוטה
 const pendingActions = new Map();
 
 function getConversationHistory(senderId) {
-    if (!conversationMemory.has(senderId)) {
-        conversationMemory.set(senderId, []);
+    const data = getConversationData(senderId);
+    
+    // בדיקה אם עבר זמן רב מדי מההודעה האחרונה
+    const timeSinceLastActivity = Date.now() - data.lastActivity;
+    if (timeSinceLastActivity > MEMORY_CONFIG.CONTEXT_TIMEOUT_MS) {
+        console.log('⏰ זמן רב עבר מהשיחה האחרונה - מתחיל שיחה חדשה');
+        data.history = [];
+        data.contextId = Math.random().toString(36).substring(7);
     }
-    return conversationMemory.get(senderId);
+    
+    data.lastActivity = Date.now();
+    return data.history;
 }
 
 function addToConversationHistory(senderId, role, content) {
-    const history = getConversationHistory(senderId);
-    history.push({
+    const data = getConversationData(senderId);
+    
+    // הוסף את ההודעה להיסטוריה
+    data.history.push({
         role: role,
-        content: content
+        content: content,
+        timestamp: Date.now()
     });
 
-    // הפחת את היסטוריית השיחה כדי למנוע לולאות
-    if (history.length > 10) {
-        history.splice(0, history.length - 10);
+    // הגבל את גודל ההיסטוריה
+    if (data.history.length > MEMORY_CONFIG.MAX_HISTORY_LENGTH) {
+        // שמור את 2 ההודעות הראשונות (לקונטקסט) ואת ה-8 האחרונות
+        const firstTwo = data.history.slice(0, 2);
+        const lastEight = data.history.slice(-8);
+        data.history = [...firstTwo, ...lastEight];
+        
+        console.log('🧹 ניקוי היסטוריה - נשמרו 10 הודעות');
     }
+    
+    data.lastActivity = Date.now();
+}
+
+function shouldStartNewConversation(message, conversationHistory) {
+    const lowerMessage = message.toLowerCase().trim();
+    
+    // בדיקה אם זו הודעת פתיחה טיפוסית
+    if (MEMORY_CONFIG.CLEANUP_KEYWORDS.some(keyword => lowerMessage === keyword)) {
+        return true;
+    }
+    
+    // בדיקה אם המשתמש מבקש במפורש שיחה חדשה
+    if (MEMORY_CONFIG.NEW_CONVERSATION_KEYWORDS.some(keyword => lowerMessage.includes(keyword))) {
+        return true;
+    }
+    
+    // בדיקה חכמה: האם זו בקשה חדשה שלא קשורה להקשר הקודם?
+    if (conversationHistory.length > 0) {
+        // בדוק אם ההודעה מכילה מילת פעולה חדשה
+        const hasActionKeyword = MEMORY_CONFIG.ACTION_KEYWORDS.some(keyword => 
+            lowerMessage.includes(keyword)
+        );
+        
+        // בדוק אם ההודעה מכילה מילות המשך
+        const hasContinuationKeyword = MEMORY_CONFIG.CONTINUATION_KEYWORDS.some(keyword => 
+            lowerMessage === keyword || lowerMessage.startsWith(keyword + ' ')
+        );
+        
+        // אם יש מילת פעולה ואין מילת המשך - כנראה זו בקשה חדשה
+        if (hasActionKeyword && !hasContinuationKeyword) {
+            // בדוק אם הבקשה שונה מהותית מההקשר הקודם
+            const lastUserMessage = [...conversationHistory]
+                .reverse()
+                .find(msg => msg.role === 'user');
+            
+            if (lastUserMessage) {
+                const lastContent = lastUserMessage.content.toLowerCase();
+                // אם ההודעה החדשה שונה מאוד מהקודמת - התחל מחדש
+                const similarity = calculateSimilarity(lowerMessage, lastContent);
+                if (similarity < 0.3) { // פחות מ-30% דמיון
+                    console.log('🔄 זוהתה בקשה חדשה שונה מההקשר הקודם');
+                    return true;
+                }
+            }
+        }
+        
+        // בדיקה נוספת: אם יש שם או נושא חדש לגמרי
+        if (hasNewEntity(message, conversationHistory)) {
+            console.log('🔄 זוהה נושא או שם חדש');
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+// פונקציה לחישוב דמיון בין שתי הודעות
+function calculateSimilarity(str1, str2) {
+    const words1 = str1.split(' ').filter(w => w.length > 2);
+    const words2 = str2.split(' ').filter(w => w.length > 2);
+    
+    if (words1.length === 0 || words2.length === 0) return 0;
+    
+    const commonWords = words1.filter(word => words2.includes(word));
+    return commonWords.length / Math.max(words1.length, words2.length);
+}
+
+// פונקציה לזיהוי ישויות חדשות (שמות, פרויקטים וכו')
+function hasNewEntity(message, history) {
+    // חילוץ שמות פרטיים (מילים שמתחילות באות גדולה)
+    const names = message.match(/[A-Z\u0590-\u05FF][a-z\u0590-\u05FF]+/g) || [];
+    
+    if (names.length > 0) {
+        // בדוק אם השמות האלה הופיעו בהיסטוריה
+        const historyText = history.map(msg => msg.content).join(' ');
+        const newNames = names.filter(name => !historyText.includes(name));
+        
+        // אם יש שמות חדשים שלא הופיעו קודם
+        return newNames.length > 0;
+    }
+    
+    return false;
 }
 
 async function searchTransactions(baseId, customerId, projectId) {
@@ -654,6 +777,17 @@ app.post('/claude-query', async(req, res) => {
         const sender = messageData.sender || 'default';
 
         console.log('📨 הודעה מ-' + sender + ':', message);
+        
+        // בדיקה אם צריך להתחיל שיחה חדשה
+        const conversationHistory = getConversationHistory(sender);
+        
+        if (shouldStartNewConversation(message, conversationHistory)) {
+            console.log('🆕 מתחיל שיחה חדשה');
+            const data = getConversationData(sender);
+            data.history = [];
+            data.contextId = Math.random().toString(36).substring(7);
+            pendingActions.delete(sender); // נקה גם אישורים מחכים
+        }
 
         // בדיקה אם זה אישור לפעולה מחכה
         if (pendingActions.has(sender)) {
@@ -710,15 +844,26 @@ app.post('/claude-query', async(req, res) => {
             }
         }
 
-        const conversationHistory = getConversationHistory(sender);
+        // קח מחדש את ההיסטוריה אחרי הבדיקות
+        const updatedHistory = getConversationHistory(sender);
         addToConversationHistory(sender, 'user', message);
 
-        const messages = conversationHistory.map(msg => ({
+        const messages = updatedHistory.map(msg => ({
             role: msg.role,
             content: msg.content
         }));
 
+        // אם זו תחילת שיחה חדשה, הוסף הודעת מערכת לקונטקסט
+        if (messages.length === 1) {
+            console.log('📝 הוספת הודעת מערכת לשיחה חדשה');
+            messages.unshift({
+                role: 'user',
+                content: 'זו תחילת שיחה חדשה. אל תמשיך פעולות משיחות קודמות. המתן להוראות חדשות מהמשתמש.'
+            });
+        }
+
         console.log('🧠 שולח ל-Claude עם', messages.length, 'הודעות');
+        console.log('🆔 Context ID:', getConversationData(sender).contextId);
 
         let response;
         let toolsExecuted = [];
@@ -947,7 +1092,7 @@ app.post('/claude-query', async(req, res) => {
 app.post('/clear-memory', (req, res) => {
     const requestData = req.body;
     const sender = requestData.sender || 'default';
-    conversationMemory.delete(sender);
+    conversationData.delete(sender); // מחק את כל הנתונים
     pendingActions.delete(sender); // נקה גם אישורים מחכים
     console.log('🧹 זיכרון נוקה עבור:', sender);
     res.json({
@@ -958,12 +1103,15 @@ app.post('/clear-memory', (req, res) => {
 
 app.get('/memory/:sender?', (req, res) => {
     const sender = req.params.sender || 'default';
-    const history = getConversationHistory(sender);
+    const data = getConversationData(sender);
     const hasPending = pendingActions.has(sender);
     res.json({
         sender: sender,
-        historyLength: history.length,
-        history: history,
+        contextId: data.contextId,
+        historyLength: data.history.length,
+        lastActivity: new Date(data.lastActivity).toISOString(),
+        timeSinceLastActivity: Date.now() - data.lastActivity,
+        history: data.history,
         hasPendingAction: hasPending
     });
 });
@@ -985,6 +1133,24 @@ app.get('/test-airtable', async(req, res) => {
     }
 });
 
+// ניקוי אוטומטי של שיחות ישנות (אופציונלי)
+setInterval(() => {
+    const now = Date.now();
+    let cleaned = 0;
+    
+    conversationData.forEach((data, senderId) => {
+        if (now - data.lastActivity > MEMORY_CONFIG.CONTEXT_TIMEOUT_MS * 2) {
+            conversationData.delete(senderId);
+            pendingActions.delete(senderId);
+            cleaned++;
+        }
+    });
+    
+    if (cleaned > 0) {
+        console.log('🧹 ניקוי אוטומטי: נמחקו', cleaned, 'שיחות ישנות');
+    }
+}, 1000 * 60 * 60); // כל שעה
+
 app.listen(3000, '0.0.0.0', () => {
     console.log('🚀 Server running on 0.0.0.0:3000');
     console.log('📝 Functions: search, get records, create, update, get fields');
@@ -992,4 +1158,5 @@ app.listen(3000, '0.0.0.0', () => {
     console.log('🧠 Memory: POST /clear-memory, GET /memory');
     console.log('🔔 Confirmation system: create/update actions require approval');
     console.log('⚡ VERSION 2024: Fixed errors + Enhanced prompt for deal deposits');
+    console.log('🆕 Smart conversation management - auto-detects new topics');
 });
