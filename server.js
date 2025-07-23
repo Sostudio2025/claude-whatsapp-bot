@@ -161,10 +161,7 @@ function hasNewEntity(message, history) {
              lastMessage.content.includes('איזה'))) {
             return false; // זו תשובה לשאלה, לא נושא חדש!
         }
-    }
-    
-    // ... המשך הקוד הקיים
-}
+
 
 // פונקציה לחישוב דמיון בין שתי הודעות
 function calculateSimilarity(str1, str2) {
