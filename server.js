@@ -150,20 +150,6 @@ function shouldStartNewConversation(message, conversationHistory) {
             }
         }
         
-// הוסף בדיקה בפונקציה hasNewEntity:
-function hasNewEntity(message, history) {
-    // אם ההודעה האחרונה הייתה שאלה - התשובה קשורה אליה!
-    if (history.length > 0) {
-        const lastMessage = history[history.length - 1];
-        if (lastMessage.role === 'assistant' && 
-            (lastMessage.content.includes('?') || 
-             lastMessage.content.includes('באיזה') ||
-             lastMessage.content.includes('איזה'))) {
-            return false; // זו תשובה לשאלה, לא נושא חדש!
-        }
-    }
-    
-}
 
 
 // פונקציה לחישוב דמיון בין שתי הודעות
@@ -179,6 +165,18 @@ function calculateSimilarity(str1, str2) {
 
 // פונקציה לזיהוי ישויות חדשות (שמות, פרויקטים וכו')
 function hasNewEntity(message, history) {
+    // אם ההודעה האחרונה הייתה שאלה - התשובה קשורה אליה!
+    if (history.length > 0) {
+        const lastMessage = history[history.length - 1];
+        if (lastMessage.role === 'assistant' && 
+            (lastMessage.content.includes('?') || 
+             lastMessage.content.includes('באיזה') ||
+             lastMessage.content.includes('איזה') ||
+             lastMessage.content.includes('מה'))) {
+            return false; // זו תשובה לשאלה, לא נושא חדש!
+        }
+    }
+    
     // חילוץ שמות פרטיים (מילים שמתחילות באות גדולה)
     const names = message.match(/[A-Z\u0590-\u05FF][a-z\u0590-\u05FF]+/g) || [];
     
