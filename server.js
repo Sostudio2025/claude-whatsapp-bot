@@ -150,6 +150,16 @@ function shouldStartNewConversation(message, conversationHistory) {
             }
         }
         
+        // בדיקה נוספת: אם יש שם או נושא חדש לגמרי
+        if (hasNewEntity(message, conversationHistory)) {
+            console.log('🔄 זוהה נושא או שם חדש');
+            return true;
+        }
+    }
+    
+    return false;
+}
+        
 
 
 // פונקציה לחישוב דמיון בין שתי הודעות
